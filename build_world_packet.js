@@ -53,7 +53,210 @@ function writeObjectId(hexStr = '111122223333444455556666') {
   return buf;
 }
 
-function buildWorldInitPacket(activeChar = null) {
+// Map bits between ojw's c varint and { flags, extra }
+function encodeC(flags, extra) {
+  let c = 0;
+  if (flags & 1) c |= 1;
+  if (flags & 128) c |= 32768;
+  if (flags & 32768) c |= 512;
+  if (flags & 8388608) c |= 1024;
+  if (flags & 65536) c |= 4096;
+  if (flags & 4) c |= 256;
+  if (flags & 2) c |= 2048;
+  if (flags & 8) c |= 64;
+  if (flags & 64) c |= 8192;
+  if (flags & 16) c |= 128;
+  if (flags & 2048) c |= 16384;
+  if (flags & 8192) c |= 262144;
+  if (flags & 0x2000000) c |= 131072;
+
+  if (extra & 2) c |= 8;
+  if (extra & 4) c |= 16;
+  if (extra & 16) c |= 2;
+  if (extra & 8) c |= 4;
+  if (extra & 64) c |= 32;
+  if (extra & 128) c |= 524288;
+  if (extra & 32) c |= 65536;
+  if (extra & 1) c |= 1048576;
+
+  return c >>> 0;
+}
+
+/**
+ * Build Opcode 88 packet to spawn a pony entity in the world
+ */
+function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, updateId = 10) {
+  const parts = [];
+
+  // Packet Header: Opcode 88 (Create Entity)
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(88 | (updateId << 8), 0);
+  parts.push(header);
+
+  // ojw entity payload:
+  // flags: 1 (position) | 2 (L / state) | 4 (D / type) | 16 (S / look) | 64 (B / name)
+  // extra: 16 (uint16 entity id) | 64 (D=1 pony flag, f=0)
+  const flags = 1 | 2 | 4 | 16 | 64;
+  const extra = 16 | 64;
+  const c = encodeC(flags, extra);
+  parts.push(writeVarInt(c));
+
+  // Entity ID (uint16 LE because 16&extra and not 8&extra)
+  const idBuf = Buffer.alloc(2);
+  idBuf.writeUInt16LE(entityId, 0);
+  parts.push(idBuf);
+
+  // Position:
+  // oS9(e, undefined) -> HF(e) = uint16 LE
+  const posBuf = Buffer.alloc(4);
+  posBuf.writeUInt16LE(Math.round(x), 0);
+  posBuf.writeUInt16LE(Math.round(y), 2);
+  parts.push(posBuf);
+
+  // 2&flags: L (state / animation) = uint8
+  parts.push(Buffer.from([state & 0xff]));
+
+  // 16&flags: S (look data) = length-prefixed bytes
+  parts.push(writeLen(lookBuf.length));
+  parts.push(lookBuf);
+
+  // 64&flags: B (name) = length-prefixed string
+  parts.push(writeString(name));
+
+  return Buffer.concat(parts);
+}
+
+/**
+ * Build Opcode 89 packet to update an entity's movement and position
+ */
+function createPonyMovePacket(entityId, x, y, updateId = 11) {
+  const parts = [];
+
+  // Packet Header: Opcode 89 (Update Entity)
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(89 | (updateId << 8), 0);
+  parts.push(header);
+
+  // flags: 1 (position)
+  // extra: 16 (uint16 entity id) | 64 (f=0)
+  const flags = 1;
+  const extra = 16 | 64;
+  const c = encodeC(flags, extra);
+  parts.push(writeVarInt(c));
+
+  // Entity ID (uint16 LE)
+  const idBuf = Buffer.alloc(2);
+  idBuf.writeUInt16LE(entityId, 0);
+  parts.push(idBuf);
+
+  // Position: x (uint16 LE), y (uint16 LE)
+  const posBuf = Buffer.alloc(4);
+  posBuf.writeUInt16LE(Math.round(x), 0);
+  posBuf.writeUInt16LE(Math.round(y), 2);
+  parts.push(posBuf);
+
+  return Buffer.concat(parts);
+}
+
+/**
+ * Build Opcode 89 packet to remove an entity from the client
+ */
+function createEntityRemovePacket(entityId, updateId = 12) {
+  const parts = [];
+
+  // Packet Header: Opcode 89
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(89 | (updateId << 8), 0);
+  parts.push(header);
+
+  // flags: 0x2000000 (remove flag: p.A |= 4)
+  // extra: 16 (uint16 entity id) | 64 (f=0)
+  const flags = 0x2000000;
+  const extra = 16 | 64;
+  const c = encodeC(flags, extra);
+  parts.push(writeVarInt(c));
+
+  // Entity ID (uint16 LE)
+  const idBuf = Buffer.alloc(2);
+  idBuf.writeUInt16LE(entityId, 0);
+  parts.push(idBuf);
+
+  return Buffer.concat(parts);
+}
+
+/**
+ * Build Opcode 87 chat broadcast packet
+ */
+function createChatPacket(entityId, name, text, chatType = 0, updateId = 13) {
+  const parts = [];
+
+  // Packet Header: Opcode 87
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(87 | (updateId << 8), 0);
+  parts.push(header);
+
+  // Om: sender entity ID (Hj / varint)
+  parts.push(writeVarInt(entityId));
+
+  // Yp: target entity ID (Hj / varint)
+  parts.push(writeVarInt(0));
+
+  // Zp: sender name (Hq / string)
+  parts.push(writeString(name));
+
+  // _p: is whisper / boolean (HJ: 1 = true, 0 = false)
+  parts.push(Buffer.from([0]));
+
+  // message: chat text (Hq / string)
+  parts.push(writeString(text));
+
+  // type: chat type (HT: uint8) 0 = say, 1 = party, etc.
+  parts.push(Buffer.from([chatType & 0xff]));
+
+  // options: (HT: uint8) 0 = normal
+  parts.push(Buffer.from([0]));
+
+  // timestamp: (HQ: uint32 LE in seconds)
+  const timeBuf = Buffer.alloc(4);
+  timeBuf.writeUInt32LE(Math.floor(Date.now() / 1000), 0);
+  parts.push(timeBuf);
+
+  return Buffer.concat(parts);
+}
+
+// Standard Authentic Pony Look Palettes for different players
+const PONY_LOOK_PRESETS = [
+  {
+    name: 'Ruby Spark',
+    look: 'aAB/9EXB0wwgAA' // Red default pony
+  },
+  {
+    name: 'Sunny Gold',
+    look: 'aDJIkRmF445AAg' // Golden mane / cheerful yellow
+  },
+  {
+    name: 'Ocean Breeze',
+    look: 'acAAhx2b7cQA' // Sky blue pegasus with cyan mane
+  },
+  {
+    name: 'Lavender Mist',
+    look: 'aADLy8vg8/EA' // Purple unicorn
+  },
+  {
+    name: 'Forest Meadow',
+    look: 'aAA4478s8eDA' // Earth pony with forest green tones
+  },
+  {
+    name: 'Snowdrop',
+    look: 'aAP8/f/9/v7+' // Pure white with soft pastel mane
+  },
+  {
+    name: 'Midnight Glow',
+    look: 'aAA43t9vbm4+' // Dark charcoal coat with blue accents
+  }
+];
+
+function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3120, spawnY = 2350) {
   const parts = [];
 
   // ==========================================
@@ -81,7 +284,7 @@ function buildWorldInitPacket(activeChar = null) {
   parts.push(bqBuf);           // bq: HW(e)
 
   // 2. gq: oBu(i) -> Town map type 0: regionsX=26, regionsY=25, dynamic unpaused day/night cycle!
-  parts.push(writeVarInt(32));   // n = 32 (bit 32: distinct Ij/Jj, bit 8 = 0: DYNAMIC UNPAUSED DAY CYCLE!)
+  parts.push(writeVarInt(32));   // n = 32 (dynamic unpaused day cycle!)
   const mapABuf = Buffer.alloc(2);
   mapABuf.writeUInt16LE(0, 0);
   parts.push(mapABuf);         // A: uint16 map flags = 0
@@ -107,8 +310,8 @@ function buildWorldInitPacket(activeChar = null) {
 
   // 5. aa: oBh(i) -> player pony data
   const entityIdBuf = Buffer.alloc(2);
-  entityIdBuf.writeUInt16LE(1, 0);
-  parts.push(entityIdBuf);     // K: entity ID = 1
+  entityIdBuf.writeUInt16LE(playerEntityId, 0);
+  parts.push(entityIdBuf);     // K: entity ID
   
   const charName = (activeChar && activeChar.name) || 'Pony';
   parts.push(writeString(charName)); // B: character name
@@ -153,8 +356,7 @@ function buildWorldInitPacket(activeChar = null) {
   parts.push(h148);
 
   const hrBuf = Buffer.alloc(4);
-  // Rect: minX=0, minY=0, maxX=25, maxY=24 -> creates all 650 regions in e.Mc!
-  hrBuf.writeInt32LE(404291584, 0);
+  hrBuf.writeInt32LE(404291584, 0); // Rect (0, 0, 25, 24)
   parts.push(hrBuf);
 
   const regions = [];
@@ -164,10 +366,9 @@ function buildWorldInitPacket(activeChar = null) {
     }
   }
 
-  parts.push(writeLen(regions.length)); // writeLen (encoded as len + 1 so H$ returns len)
+  parts.push(writeLen(regions.length));
   for (const { rx, ry } of regions) {
     const regBuf = Buffer.alloc(2);
-    // ojC: r = (rx << 6) | (ry << 11) | extra(0) -> loads cachedMap tiles!
     const rVal = ((rx & 31) << 6) | ((ry & 31) << 11);
     regBuf.writeUInt16LE(rVal, 0);
     parts.push(regBuf);
@@ -183,52 +384,55 @@ function buildWorldInitPacket(activeChar = null) {
   const hr147 = Buffer.alloc(4);
   hr147.writeInt32LE(404291584, 0); // rect (0, 0, 25, 24)
   parts.push(hr147);
-
-  parts.push(writeLen(0)); // 0 dynamic entity batches (static entities from cachedMap)
+  parts.push(writeLen(0));
 
   // ==========================================
-  // CASE 149: LOAD REGION WALLS & BUILDINGS (ALL 650 REGIONS)
+  // CASE 149: LOAD REGION WALLS & BUILDINGS
   // ==========================================
   const h149 = Buffer.alloc(4);
   h149.writeUInt32LE(149 | (4 << 8), 0); // opcode 149, updateId 4
   parts.push(h149);
 
   const hr149 = Buffer.alloc(4);
-  hr149.writeInt32LE(404291584, 0); // rect (0, 0, 25, 24) -> sets 0x40000000
+  hr149.writeInt32LE(404291584, 0);
   parts.push(hr149);
 
   parts.push(writeLen(regions.length));
   for (const { rx, ry } of regions) {
     const regBuf = Buffer.alloc(2);
-    // extra = 0 -> loads walls from cachedMaps
     const rVal = ((rx & 31) << 6) | ((ry & 31) << 11);
     regBuf.writeUInt16LE(rVal, 0);
     parts.push(regBuf);
   }
 
   // ==========================================
-  // CASE 110: SPAWN PLAYER AT TOWN CENTER
+  // CASE 110: SPAWN PLAYER AT SCENIC OPEN LAWN
   // ==========================================
   const h110 = Buffer.alloc(4);
   h110.writeUInt32LE(110 | (5 << 8), 0); // opcode 110, updateId 5
   parts.push(h110);
 
-  // Market square central plaza coords: world (3250, 2260) (open cobblestone walkway beside kiosk)
-  const spawnX = Buffer.alloc(2);
-  spawnX.writeUInt16LE(3250, 0);
-  parts.push(spawnX);
+  // Spacious, scenic meadow near central pathway: x=2600, y=2200
+  const spawnXBuf = Buffer.alloc(2);
+  spawnXBuf.writeUInt16LE(spawnX, 0);
+  parts.push(spawnXBuf);
 
-  const spawnY = Buffer.alloc(2);
-  spawnY.writeUInt16LE(2260, 0);
-  parts.push(spawnY);
+  const spawnYBuf = Buffer.alloc(2);
+  spawnYBuf.writeUInt16LE(spawnY, 0);
+  parts.push(spawnYBuf);
 
-  const spawnZ = Buffer.alloc(2);
-  spawnZ.writeInt16LE(0, 0);
-  parts.push(spawnZ);
+  const spawnZBuf = Buffer.alloc(2);
+  spawnZBuf.writeInt16LE(0, 0);
+  parts.push(spawnZBuf);
 
   return Buffer.concat(parts);
 }
 
 module.exports = {
-  buildWorldInitPacket
+  buildWorldInitPacket,
+  createPonySpawnPacket,
+  createPonyMovePacket,
+  createEntityRemovePacket,
+  createChatPacket,
+  PONY_LOOK_PRESETS
 };

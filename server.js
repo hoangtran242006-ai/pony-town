@@ -35,7 +35,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.raw({ type: 'application/octet-stream', limit: '50mb' }));
 
-// Map Ingestion APIs for 100% Ground-Truth Sync from live web
+// Map Ingestion APIs for Ground-Truth Sync from live web
 app.post('/api/ingest_map', (req, res) => {
   try {
     const data = req.body;
@@ -105,22 +105,29 @@ function writeJson(file, data) {
     return true;
   } catch (e) {
     console.error(`Error writing ${file}:`, e.message);
-    return false;
   }
+  return false;
 }
+
+// Global active player sessions map
+let nextEntityId = 10;
+const activeSessions = new Map(); // ws -> session
+
+// Scenic spawn meadow center (open, spacious, bug-free)
+const SPAWN_CENTER = { x: 3120, y: 2350 };
 
 // ==========================================
 // REST & Binary APIs (Pony Town compatibility)
 // ==========================================
 
-// Telemetry & Reporting endpoints (prevents net::ERR_ABORTED)
+// Telemetry & Reporting endpoints
 app.post(['/api-raw/apply', '/api-raw/apply-text', '/api/apply-acc', '/api2/game/changelog'], (req, res) => {
   res.status(200).send('OK');
 });
 
-// Server status (Binary for official client, JSON fallback)
+// Server status
 app.get(['/api/status', '/api2/game/status'], (req, res) => {
-  const onlineCount = (wss && wss.clients) ? wss.clients.size : 1;
+  const onlineCount = (wss && wss.clients) ? Math.max(1, wss.clients.size) : 1;
   const accepts = req.headers['accept'] || '';
   if (accepts.includes('application/octet-stream') || !accepts.includes('application/json')) {
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -138,17 +145,17 @@ app.get(['/api/status', '/api2/game/status'], (req, res) => {
 
 // Server list
 app.get(['/api/servers', '/api/refetch-servers'], (req, res) => {
-  const count = (wss && wss.clients) ? wss.clients.size : 1;
+  const count = (wss && wss.clients) ? Math.max(1, wss.clients.size) : 1;
   res.json([
     { id: 'safe-vi', name: 'Safe Vietnamese', host: '', count, flags: 'safe,pg' }
   ]);
 });
 
-// Account info (POST for official client with binary, GET for JSON)
+// Account info
 app.all(['/api1/account', '/api/account'], (req, res) => {
   const characters = readJson(CHARACTERS_FILE, []);
   const activeChar = characters[0] || null;
-  const onlineCount = (wss && wss.clients) ? wss.clients.size : 1;
+  const onlineCount = (wss && wss.clients) ? Math.max(1, wss.clients.size) : 1;
   const accepts = req.headers['accept'] || '';
 
   if (req.method === 'POST' || accepts.includes('application/octet-stream')) {
@@ -198,7 +205,7 @@ app.post(['/api/pony/save', '/api/account/character'], (req, res) => {
         look: parsed.rawLookB64,
         lookBuf: parsed.lookBuf
       };
-      console.log(`[PONY-SAVE] Successfully parsed binary save for "${newChar.name}", lookLen=${parsed.lookBuf ? parsed.lookBuf.length : 0}`);
+      console.log(`[PONY-SAVE] Successfully parsed binary save for "${newChar.name}"`);
     }
   }
 
@@ -257,441 +264,193 @@ app.post(['/api/settings', '/api/update-settings'], (req, res) => {
   res.json({ success: true, settings: updated });
 });
 
-// Legacy client route (serves original saved html)
-app.get('/legacy', (req, res) => {
-  const legacyPath = path.join(__dirname, 'archive/🎮 Pony Town.html');
-  if (fs.existsSync(legacyPath)) {
-    res.sendFile(legacyPath);
-  } else {
-    res.redirect('/');
-  }
-});
-
 // ==========================================
-// WebSocket Real-time Game Server (/ws)
+// WebSocket Real-time Multiplayer Server (/ws)
 // ==========================================
 const wss = new WebSocketServer({ server, path: '/ws' });
 
-// In-memory game state
-const players = new Map();
-const worldData = readJson(WORLD_FILE, {
-  width: 120,
-  height: 90,
-  spawn: { x: 60, y: 45 },
-  items: []
-});
-
-// World item tracking
-let worldItems = [...(worldData.items || [])];
-
-// Friendly NPC ponies to keep the town lively
-const npcs = [
-  {
-    id: 'npc-derpy',
-    name: 'Derpy Muffin',
-    isNpc: true,
-    type: 'pegasus',
-    x: 58,
-    y: 43,
-    vx: 0,
-    vy: 0,
-    dir: 'down',
-    state: 'stand',
-    action: 'idle',
-    itemInMouth: 'muffin',
-    colors: {
-      coat: '#a8b2cc',
-      mane: '#fde989',
-      maneAccent: '#f5dc6f',
-      tail: '#fde989',
-      tailAccent: '#f5dc6f',
-      eyes: '#e5b842',
-      hooves: '#959fb8',
-      wings: '#a8b2cc',
-      horn: '#a8b2cc'
-    },
-    style: { mane: 'messy', tail: 'fluffy', expression: 'silly', accessory: 'none' }
-  },
-  {
-    id: 'npc-apple',
-    name: 'Apple Cobbler',
-    isNpc: true,
-    type: 'earth',
-    x: 53,
-    y: 39,
-    vx: 0,
-    vy: 0,
-    dir: 'right',
-    state: 'stand',
-    action: 'idle',
-    itemInMouth: 'apple',
-    colors: {
-      coat: '#eb9b42',
-      mane: '#df3c3c',
-      maneAccent: '#c02626',
-      tail: '#df3c3c',
-      tailAccent: '#c02626',
-      eyes: '#5da446',
-      hooves: '#c97724',
-      wings: '#eb9b42',
-      horn: '#eb9b42'
-    },
-    style: { mane: 'short', tail: 'normal', expression: 'happy', accessory: 'hat' }
-  }
-];
-
-// Broadcast message to all connected clients
-function broadcast(msg, excludeWs = null) {
-  const data = JSON.stringify(msg);
-  for (const client of wss.clients) {
-    if (client !== excludeWs && client.readyState === WebSocket.OPEN && !client.isBinaryClient) {
-      client.send(data);
-    }
-  }
+let packetUpdateCounter = 20;
+function nextUpdateId() {
+  return (++packetUpdateCounter) & 0xffffff;
 }
 
-// Send message to a specific player by name
-function sendWhisper(targetName, whisperMsg, senderWs) {
-  let found = false;
-  const targetLower = targetName.toLowerCase().trim();
-
-  // Search players
-  for (const [ws, player] of players.entries()) {
-    if (player.name && player.name.toLowerCase().trim() === targetLower) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(whisperMsg));
-      }
-      found = true;
-    }
-  }
-
-  // Check NPCs for automated cute responses
-  if (!found) {
-    const npc = npcs.find(n => n.name.toLowerCase().includes(targetLower));
-    if (npc) {
-      found = true;
-      setTimeout(() => {
-        const replies = [
-          "Mmm, muffins!",
-          "Hello there! Nice weather in Pony Town today!",
-          "Did you bring any apples? *boop*",
-          "Hehe, let's explore the fountain!",
-          "*waves hoof happily*"
-        ];
-        const reply = replies[Math.floor(Math.random() * replies.length)];
-        const npcWhisper = {
-          type: 'chat',
-          chatType: 'whisper',
-          senderId: npc.id,
-          senderName: npc.name,
-          recipientName: whisperMsg.senderName,
-          text: reply,
-          time: Date.now()
-        };
-        if (senderWs.readyState === WebSocket.OPEN) {
-          senderWs.send(JSON.stringify(npcWhisper));
-        }
-      }, 700);
-    }
-  }
-
-  return found;
-}
-
-// NPC random movement loop
-setInterval(() => {
-  for (const npc of npcs) {
-    // 30% chance to move or change action
-    if (Math.random() < 0.35) {
-      const dirs = ['left', 'right', 'up', 'down', 'idle'];
-      const pick = dirs[Math.floor(Math.random() * dirs.length)];
-      if (pick === 'idle') {
-        npc.vx = 0;
-        npc.vy = 0;
-        npc.state = 'stand';
-        if (Math.random() < 0.15) {
-          npc.action = Math.random() < 0.5 ? 'sit' : 'idle';
-        }
-      } else {
-        npc.dir = pick;
-        npc.state = 'walk';
-        npc.action = 'idle';
-        const spd = 0.8;
-        npc.vx = pick === 'left' ? -spd : pick === 'right' ? spd : 0;
-        npc.vy = pick === 'up' ? -spd : pick === 'down' ? spd : 0;
-      }
-    }
-
-    // Apply NPC movement within bounds
-    if (npc.vx !== 0 || npc.vy !== 0) {
-      npc.x = Math.max(45, Math.min(75, npc.x + npc.vx * 0.1));
-      npc.y = Math.max(35, Math.min(55, npc.y + npc.vy * 0.1));
-
-      broadcast({
-        type: 'move',
-        id: npc.id,
-        x: npc.x,
-        y: npc.y,
-        vx: npc.vx,
-        vy: npc.vy,
-        dir: npc.dir,
-        state: npc.state,
-        action: npc.action
-      });
-    }
-  }
-}, 500);
-
-// WebSocket connection handling
 wss.on('connection', (ws, req) => {
-  ws.isBinaryClient = true;
-  const playerId = 'player-' + Math.random().toString(36).substring(2, 9);
-  let playerData = null;
+  const assignedEntityId = ++nextEntityId;
+  const sessionIndex = activeSessions.size;
 
-  console.log(`[WS] Client connected: ${playerId} url: ${req ? req.url : ''}`);
+  // Pick unique authentic pony look & name preset
+  const preset = worldPacket.PONY_LOOK_PRESETS[sessionIndex % worldPacket.PONY_LOOK_PRESETS.length];
+  const charLookBuf = Buffer.from(preset.look, 'base64');
+  const charName = sessionIndex === 0 ? 'Pony' : `${preset.name}`;
 
-  // Send binary world init packet to official Pony Town client!
+  // Slight jitter around scenic meadow spawn
+  const spawnX = SPAWN_CENTER.x + (sessionIndex % 4) * 24 - 36;
+  const spawnY = SPAWN_CENTER.y + Math.floor(sessionIndex / 4) * 24 - 24;
+
+  const session = {
+    ws,
+    entityId: assignedEntityId,
+    name: charName,
+    lookBuf: charLookBuf,
+    x: spawnX,
+    y: spawnY,
+    z: 0
+  };
+
+  activeSessions.set(ws, session);
+  console.log(`[WS] Client connected: entityId=${assignedEntityId}, name="${charName}", pos=(${spawnX}, ${spawnY}) (total active: ${activeSessions.size})`);
+
+  // Heartbeat ping interval
   const pingInterval = setInterval(() => {
-    if (ws.readyState === 1) { // 1 = OPEN
+    if (ws.readyState === WebSocket.OPEN) {
       ws.send(Buffer.alloc(0));
     } else {
       clearInterval(pingInterval);
     }
-  }, 2000);
+  }, 2500);
 
+  // 1. Send world init packet to new client (initializes WebGL map and assigns self entityId)
   try {
-    const characters = readJson(CHARACTERS_FILE, []);
-    const activeChar = characters[0] || null;
-    const initPkt = worldPacket.buildWorldInitPacket(activeChar);
+    const initChar = { name: charName, lookBuf: charLookBuf };
+    const initPkt = worldPacket.buildWorldInitPacket(initChar, assignedEntityId, spawnX, spawnY);
     ws.send(initPkt);
-    console.log(`[WS] Sent initial binary world packet (${initPkt.length} bytes) to ${playerId} with char "${activeChar ? activeChar.name : 'default'}"`);
+    console.log(`[WS] Sent initial binary world packet (${initPkt.length} bytes) to entity ${assignedEntityId}`);
   } catch (err) {
-    console.error('[WS] Error sending init packet:', err.message);
+    console.error('[WS] Error sending world init packet:', err.message);
   }
 
+  // 2. Synchronize existing players to this new client (Opcode 88)
+  for (const [otherWs, otherSession] of activeSessions.entries()) {
+    if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+      const spawnOther = worldPacket.createPonySpawnPacket(
+        otherSession.entityId,
+        otherSession.name,
+        otherSession.lookBuf,
+        otherSession.x,
+        otherSession.y,
+        otherSession.z,
+        0,
+        nextUpdateId()
+      );
+      ws.send(spawnOther);
+    }
+  }
+
+  // 3. Broadcast new player spawn (Opcode 88) to all existing clients
+  const spawnNewPkt = worldPacket.createPonySpawnPacket(
+    session.entityId,
+    session.name,
+    session.lookBuf,
+    session.x,
+    session.y,
+    session.z,
+    0,
+    nextUpdateId()
+  );
+  for (const [otherWs] of activeSessions.entries()) {
+    if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+      otherWs.send(spawnNewPkt);
+    }
+  }
+
+  // Message handler
   ws.on('message', (raw, isBinary) => {
     if (isBinary || Buffer.isBuffer(raw)) {
       const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
-      console.log(`[WS] Received binary message from ${playerId}: len=${buf.length} hex=${buf.toString('hex')}`);
-      // Echo ping back immediately
+
+      // Ping
       if (buf.length === 0) {
         ws.send(Buffer.alloc(0));
-      } else if (buf.length >= 2 && buf[0] === 1) {
-        console.log(`[WS] Resolving actionWithReturn from ${playerId}, action=${buf[1]}`);
-        // Send resolve packet: 255 (resolve), 1 (method 1), 1 (messageId 1), 0 (undefined)
+        return;
+      }
+
+      // Method 0: move(t) -> 13 bytes total: [0, o_u32, r_u32, a_u32]
+      if (buf.length >= 13 && buf[0] === 0) {
+        const o = buf.readUInt32LE(1);
+        const r = buf.readUInt32LE(5);
+        const a = buf.readUInt32LE(9);
+
+        // Decode position
+        const origX_Y = (o ^ 0xb8f2782c) >>> 0;
+        const x = (origX_Y & 0xffff);
+        const y = (origX_Y >>> 16);
+
+        session.x = x;
+        session.y = y;
+
+        // Broadcast movement to all other clients via Opcode 89
+        const movePkt = worldPacket.createPonyMovePacket(session.entityId, x, y, nextUpdateId());
+        for (const [otherWs] of activeSessions.entries()) {
+          if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+            otherWs.send(movePkt);
+          }
+        }
+        return;
+      }
+
+      // Method 1: actionWithReturn -> resolve packet: 255 (resolve), 1 (method 1), messageId, 0 (undefined)
+      if (buf.length >= 2 && buf[0] === 1) {
+        const actionId = buf[1];
         ws.send(Buffer.from([255, 1, 1, 0]));
+        return;
       }
-      return;
-    }
-    try {
-      const msg = JSON.parse(raw);
 
-      switch (msg.type) {
-        // Player joins the town
-        case 'join': {
-          playerData = {
-            id: playerId,
-            name: msg.name || 'Wanderer',
-            type: msg.ponyType || 'earth',
-            x: msg.x || worldData.spawn.x + (Math.random() * 4 - 2),
-            y: msg.y || worldData.spawn.y + (Math.random() * 4 - 2),
-            vx: 0,
-            vy: 0,
-            dir: 'down',
-            state: 'stand',
-            action: 'idle',
-            itemInMouth: null,
-            colors: msg.colors || {},
-            style: msg.style || {}
-          };
-
-          players.set(ws, playerData);
-
-          // 1. Send welcoming init packet to joining player
-          ws.send(JSON.stringify({
-            type: 'init',
-            selfId: playerId,
-            world: worldData,
-            items: worldItems,
-            players: [
-              ...Array.from(players.values()),
-              ...npcs
-            ]
-          }));
-
-          // 2. Announce to other players
-          broadcast({
-            type: 'player_joined',
-            player: playerData
-          }, ws);
-
-          console.log(`[Game] Player "${playerData.name}" joined (${playerId})`);
-          break;
-        }
-
-        // Movement sync
-        case 'move': {
-          if (!playerData) return;
-          playerData.x = msg.x;
-          playerData.y = msg.y;
-          playerData.vx = msg.vx || 0;
-          playerData.vy = msg.vy || 0;
-          playerData.dir = msg.dir || playerData.dir;
-          playerData.state = msg.state || playerData.state;
-
-          broadcast({
-            type: 'move',
-            id: playerId,
-            x: playerData.x,
-            y: playerData.y,
-            vx: playerData.vx,
-            vy: playerData.vy,
-            dir: playerData.dir,
-            state: playerData.state,
-            action: playerData.action
-          }, ws);
-          break;
-        }
-
-        // Action/Emote sync (sit, lie, sleep, fly, boop, laugh, cry, etc.)
-        case 'action': {
-          if (!playerData) return;
-          playerData.action = msg.action;
-          if (msg.state) playerData.state = msg.state;
-
-          broadcast({
-            type: 'action',
-            id: playerId,
-            action: msg.action,
-            state: playerData.state,
-            extra: msg.extra
-          });
-          break;
-        }
-
-        // Chat message
-        case 'chat': {
-          if (!playerData) return;
-          const text = (msg.text || '').trim();
-          if (!text) return;
-
-          // Check if whisper: /w <name> <msg> or /whisper <name> <msg>
-          const whisperMatch = text.match(/^\/(?:w|whisper)\s+([^\s]+)\s+(.+)$/i);
-          if (whisperMatch) {
-            const targetName = whisperMatch[1];
-            const whisperContent = whisperMatch[2];
-
-            const whisperPacket = {
-              type: 'chat',
-              chatType: 'whisper',
-              senderId: playerId,
-              senderName: playerData.name,
-              recipientName: targetName,
-              text: whisperContent,
-              time: Date.now()
-            };
-
-            const delivered = sendWhisper(targetName, whisperPacket, ws);
-
-            // Send echo back to sender
-            ws.send(JSON.stringify({
-              ...whisperPacket,
-              isEcho: true,
-              delivered
-            }));
-            return;
-          }
-
-          // Check for in-chat command emotes
-          if (text.startsWith('/')) {
-            const cmd = text.toLowerCase().substring(1);
-            if (['sit', 'lie', 'sleep', 'fly', 'boop', 'kiss', 'laugh', 'cry', 'yawn'].includes(cmd)) {
-              playerData.action = cmd;
-              broadcast({
-                type: 'action',
-                id: playerId,
-                action: cmd,
-                state: cmd === 'fly' ? 'fly' : playerData.state
-              });
-              return;
+      // Method 2: action -> e.g. chat say (194) or expressions
+      if (buf.length >= 2 && buf[0] === 2) {
+        const actionType = buf[1];
+        // Action 194: Say message
+        if (actionType === 194) {
+          try {
+            // Read string from message buffer:
+            // Skip actionType byte (1), then read fields: [12, chatType], [3, msgId], [14, targetId], [6, text]
+            let offset = 2;
+            const chatType = buf.readUInt8(offset); offset += 1;
+            // Varint msgId
+            while (offset < buf.length && (buf[offset] & 0x80)) offset++;
+            offset++; // last byte of varint
+            // TargetId uint16
+            offset += 2;
+            // Varint string length
+            let strLen = 0, shift = 0;
+            while (offset < buf.length) {
+              const b = buf[offset++];
+              strLen |= (b & 0x7f) << shift;
+              if (!(b & 0x80)) break;
+              shift += 7;
             }
-          }
+            strLen -= 1; // decoded length
+            if (strLen > 0 && offset + strLen <= buf.length) {
+              const text = buf.toString('utf8', offset, offset + strLen);
+              console.log(`[CHAT] ${session.name} (${session.entityId}): "${text}"`);
 
-          // Public chat broadcast
-          broadcast({
-            type: 'chat',
-            chatType: 'public',
-            senderId: playerId,
-            senderName: playerData.name,
-            x: playerData.x,
-            y: playerData.y,
-            text: text,
-            time: Date.now()
-          });
-          break;
-        }
-
-        // World Item pickup / drop
-        case 'interact': {
-          if (!playerData) return;
-          const { itemId, action } = msg;
-
-          if (action === 'pickup') {
-            const itemIdx = worldItems.findIndex(i => i.id === itemId);
-            if (itemIdx !== -1) {
-              const item = worldItems[itemIdx];
-              worldItems.splice(itemIdx, 1);
-              playerData.itemInMouth = item.type;
-
-              broadcast({
-                type: 'item_picked',
-                itemId,
-                playerId,
-                itemType: item.type
-              });
+              // Broadcast chat via Opcode 87 to all connected clients (including sender)
+              const chatPkt = worldPacket.createChatPacket(session.entityId, session.name, text, chatType, nextUpdateId());
+              for (const [clientWs] of activeSessions.entries()) {
+                if (clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.send(chatPkt);
+                }
+              }
             }
-          } else if (action === 'drop' || action === 'eat') {
-            const oldType = playerData.itemInMouth;
-            playerData.itemInMouth = null;
-
-            if (action === 'drop' && oldType) {
-              const droppedItem = {
-                id: 'item-' + Date.now(),
-                x: Math.round(playerData.x),
-                y: Math.round(playerData.y),
-                type: oldType
-              };
-              worldItems.push(droppedItem);
-              broadcast({
-                type: 'item_spawned',
-                item: droppedItem
-              });
-            } else if (action === 'eat') {
-              broadcast({
-                type: 'action',
-                id: playerId,
-                action: 'eat',
-                extra: oldType
-              });
-            }
+          } catch (e) {
+            console.error('[WS] Error parsing chat action:', e.message);
           }
-          break;
         }
+        return;
       }
-    } catch (e) {
-      console.error('[WS] Packet processing error:', e.message);
     }
   });
 
   ws.on('close', () => {
     clearInterval(pingInterval);
-    if (playerData) {
-      console.log(`[Game] Player "${playerData.name}" left (${playerId})`);
-      players.delete(ws);
-      broadcast({
-        type: 'player_left',
-        id: playerId
-      });
+    activeSessions.delete(ws);
+    console.log(`[WS] Client disconnected: entityId=${session.entityId}, name="${session.name}" (remaining: ${activeSessions.size})`);
+
+    // Broadcast removal to all remaining clients via Opcode 89 (flags: 0x2000000)
+    const removePkt = worldPacket.createEntityRemovePacket(session.entityId, nextUpdateId());
+    for (const [otherWs] of activeSessions.entries()) {
+      if (otherWs.readyState === WebSocket.OPEN) {
+        otherWs.send(removePkt);
+      }
     }
   });
 });
@@ -700,10 +459,9 @@ wss.on('connection', (ws, req) => {
 server.listen(PORT, () => {
   console.log(`
 ======================================================
-  🎮 PONY TOWN - Full Project Server is Running!
+  🎮 PONY TOWN - Multiplayer Game Server Running!
   ----------------------------------------------------
   Local URL:    http://localhost:${PORT}
-  Legacy URL:   http://localhost:${PORT}/legacy
   WebSocket:    ws://localhost:${PORT}/ws
 ======================================================
   `);
