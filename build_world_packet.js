@@ -362,7 +362,7 @@ const PONY_LOOK_PRESETS = [
   }
 ];
 
-function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3250, spawnY = 2260, isDev = false) {
+function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3100, spawnY = 2240, isDev = false) {
   const parts = [];
 
   // ==========================================

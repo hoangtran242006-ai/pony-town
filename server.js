@@ -323,7 +323,7 @@ function allocateEntityId() {
 }
 
 // Scenic spawn meadow center (Market Square Town Plaza with trees, buildings, houses)
-const SPAWN_CENTER = { x: 3250, y: 2260 };
+const SPAWN_CENTER = { x: 3100, y: 2240 };
 
 // ==========================================
 // REST & Binary APIs (Pony Town compatibility)
@@ -538,8 +538,8 @@ wss.on('connection', (ws, req) => {
   }
 
   // Slight jitter around Market Square spawn
-  const spawnX = SPAWN_CENTER.x + (sessionIndex % 4) * 20 - 30;
-  const spawnY = SPAWN_CENTER.y + Math.floor(sessionIndex / 4) * 20 - 20;
+  const spawnX = SPAWN_CENTER.x + (sessionIndex % 4) * 24 - 36;
+  const spawnY = SPAWN_CENTER.y + Math.floor(sessionIndex / 4) * 20;
 
   const session = {
     ws,
@@ -577,7 +577,7 @@ wss.on('connection', (ws, req) => {
   }
 
   // 2. Synchronize existing players to this new client (Opcode 88)
-  // Give new client 1200ms to complete local map parsing before spawning existing entities
+  // Give new client 200ms to complete initial packet processing before spawning existing entities
   setTimeout(() => {
     if (ws.readyState === WebSocket.OPEN) {
       for (const [otherWs, otherSession] of activeSessions.entries()) {
@@ -598,7 +598,7 @@ wss.on('connection', (ws, req) => {
         }
       }
     }
-  }, 1200);
+  }, 200);
 
   // 3. Broadcast new player spawn (Opcode 88) to all existing clients
   const spawnNewPkt = worldPacket.createPonySpawnPacket(
@@ -631,8 +631,8 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        // Method 0: move(t) -> 13 bytes total: [0, o_u32, r_u32, a_u32]
-        if (buf.length >= 13 && buf[0] === 0) {
+        // Method 2: move(t) -> 13 bytes total: [2, o_u32, r_u32, a_u32]
+        if (buf.length === 13 && buf[0] === 2) {
           const o = buf.readUInt32LE(1);
           const r = buf.readUInt32LE(5);
           const a = buf.readUInt32LE(9);
@@ -680,11 +680,11 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        // Method 2: action -> e.g. chat say (194) or expressions (199)
-        if (buf.length >= 2 && buf[0] === 2) {
+        // Method 0: action -> e.g. chat say (194) or expressions (199)
+        if (buf.length >= 2 && buf[0] === 0) {
           const actionType = buf[1];
           // Action 194: Say message
-          // Format: [2, 194, chatType(u8), messageId(varint), targetEntityId(u16 LE), strLen+1(varint), text(utf8), options(u8)]
+          // Format: [0, 194, chatType(u8), messageId(varint), targetEntityId(u16 LE), strLen+1(varint), text(utf8), options(u8)]
           if (actionType === 194) {
             try {
               let offset = 2;
@@ -729,7 +729,7 @@ wss.on('connection', (ws, req) => {
           }
 
           // Action 199: Expressions / Emotes
-          // Format: [2, 199, expr1(u32 LE), expr2(u32 LE), options(u8)]
+          // Format: [0, 199, expr1(u32 LE), expr2(u32 LE), options(u8)]
           if (actionType === 199 && buf.length >= 10) {
             try {
               const expr1 = buf.readUInt32LE(2);
@@ -747,6 +747,7 @@ wss.on('connection', (ws, req) => {
             }
             return;
           }
+          return;
         }
       }
     } catch (err) {
