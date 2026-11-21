@@ -128,6 +128,10 @@ function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, 
   }
   parts.push(writeString(cleanName));
 
+  // 64&extra: When 64 & extra is set in ojw, it reads 1 byte for lc:
+  // let t = HT(e); p.lc = t; void 0 !== p.Cf && (p.Cf ^= t);
+  parts.push(Buffer.from([0])); // lc = 0 (no position xor shift)
+
   return Buffer.concat(parts);
 }
 
