@@ -500,6 +500,26 @@ function nextUpdateId() {
   return (++packetUpdateCounter) & 0xffffff;
 }
 
+// 16 directional vectors matching client oON table
+const MOVE_DIRECTIONS = [
+  { x: 0, y: -24 },   // 0: Up
+  { x: 16, y: -24 },  // 1: Up-Right
+  { x: 32, y: -24 },  // 2: Up-Right
+  { x: 32, y: -12 },  // 3: Right-Up
+  { x: 32, y: 0 },    // 4: Right
+  { x: 32, y: 12 },   // 5: Right-Down
+  { x: 32, y: 24 },   // 6: Down-Right
+  { x: 16, y: 24 },   // 7: Down-Right
+  { x: 0, y: 24 },    // 8: Down
+  { x: -16, y: 24 },  // 9: Down-Left
+  { x: -32, y: 24 },  // 10: Down-Left
+  { x: -32, y: 12 },  // 11: Left-Down
+  { x: -32, y: 0 },   // 12: Left
+  { x: -32, y: -12 }, // 13: Left-Up
+  { x: -32, y: -24 }, // 14: Up-Left
+  { x: -16, y: -24 }  // 15: Up-Left
+];
+
 wss.on('connection', (ws, req) => {
   // Retrieve player session
   let authSession = getSessionFromReq(req);
@@ -647,25 +667,48 @@ wss.on('connection', (ws, req) => {
           const dir = decodedR & 0xf;
           const animState = (decodedR >>> 4) & 0xff;
 
-          // Facing direction: bit 1 is set for facing left (dir & 1 or x < session.x)
+          // Calculate velocity from direction and animationState
+          let vx = 0, vy = 0;
+          if (animState > 0) {
+            const speed = (animState === 2 ? 256 : 128);
+            const vec = MOVE_DIRECTIONS[dir % 16];
+            vx = (vec.x * speed) | 0;
+            vy = (vec.y * speed) | 0;
+          }
+
+          // Facing direction: bit 1 (value 2): 0=facing right, 2=facing left
           let state = session.state || 0;
-          if (x < session.x || (dir & 1)) {
+          if (vx < 0 || x < session.x || (dir >= 9 && dir <= 15)) {
             state |= 2;
-          } else if (x > session.x || (dir & 2)) {
+          } else if (vx > 0 || x > session.x || (dir >= 1 && dir <= 7)) {
             state &= ~2;
           }
-          // Walking flag: bit 0
-          if (x !== session.x || y !== session.y || animState > 0) {
-            state |= 1;
+
+          // Moving flag: bit 2 (value 4) is required by client oEu(e) to keep legs/movement animating
+          if (animState > 0 || vx !== 0 || vy !== 0) {
+            state |= 4;
           } else {
-            state &= ~1;
+            state &= ~4;
           }
+
           session.x = x;
           session.y = y;
+          session.vx = vx;
+          session.vy = vy;
           session.state = state;
+          session.animState = animState;
 
-          // Broadcast movement to all other clients via Opcode 89
-          const movePkt = worldPacket.createPonyMovePacket(session.entityId, x, y, state, nextUpdateId());
+          // Broadcast movement with velocity, state, and animationState via Opcode 89
+          const movePkt = worldPacket.createPonyMovePacket(
+            session.entityId,
+            x,
+            y,
+            vx,
+            vy,
+            state,
+            animState,
+            nextUpdateId()
+          );
           for (const [otherWs] of activeSessions.entries()) {
             if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
               otherWs.send(movePkt);
@@ -680,12 +723,49 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
-        // Method 0: action -> e.g. chat say (194) or expressions (199)
+        // Method 0: action -> e.g. chat say (194), typing indicator (195), expressions (199)
         if (buf.length >= 2 && buf[0] === 0) {
           const actionType = buf[1];
+
+          // Action 195: Typing indicator
+          // Format: [0, 195, chatType(u8), targetEntityId(u16 LE)]
+          if (actionType === 195) {
+            const chatType = buf.length > 2 ? buf.readUInt8(2) : 0;
+            const typingPkt = worldPacket.createTypingPacket(session.entityId, true, chatType, nextUpdateId());
+            for (const [otherWs] of activeSessions.entries()) {
+              if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+                otherWs.send(typingPkt);
+              }
+            }
+
+            // Auto-clear typing indicator after 6s if inactive
+            if (session.typingTimeout) clearTimeout(session.typingTimeout);
+            session.typingTimeout = setTimeout(() => {
+              const stopPkt = worldPacket.createTypingPacket(session.entityId, false, 0, nextUpdateId());
+              for (const [otherWs] of activeSessions.entries()) {
+                if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+                  otherWs.send(stopPkt);
+                }
+              }
+              session.typingTimeout = null;
+            }, 6000);
+            return;
+          }
+
           // Action 194: Say message
           // Format: [0, 194, chatType(u8), messageId(varint), targetEntityId(u16 LE), strLen+1(varint), text(utf8), options(u8)]
           if (actionType === 194) {
+            if (session.typingTimeout) {
+              clearTimeout(session.typingTimeout);
+              session.typingTimeout = null;
+            }
+            // Dismiss typing bubble on other clients
+            const stopPkt = worldPacket.createTypingPacket(session.entityId, false, 0, nextUpdateId());
+            for (const [otherWs] of activeSessions.entries()) {
+              if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+                otherWs.send(stopPkt);
+              }
+            }
             try {
               let offset = 2;
               const chatType = buf.readUInt8(offset); offset += 1;
@@ -757,13 +837,18 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     clearInterval(pingInterval);
+    if (session.typingTimeout) {
+      clearTimeout(session.typingTimeout);
+    }
     activeSessions.delete(ws);
     console.log(`[WS] Client disconnected: entityId=${session.entityId}, name="${session.name}" (remaining: ${activeSessions.size})`);
 
-    // Broadcast removal to all remaining clients via Opcode 89
+    // Broadcast typing removal and entity removal to all remaining clients
+    const stopTypingPkt = worldPacket.createTypingPacket(session.entityId, false, 0, nextUpdateId());
     const removePkt = worldPacket.createEntityRemovePacket(session.entityId, nextUpdateId());
     for (const [otherWs] of activeSessions.entries()) {
       if (otherWs.readyState === WebSocket.OPEN) {
+        otherWs.send(stopTypingPkt);
         otherWs.send(removePkt);
       }
     }

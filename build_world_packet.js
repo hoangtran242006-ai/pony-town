@@ -151,9 +151,9 @@ function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, 
 }
 
 /**
- * Build Opcode 89 packet to update an entity's movement, position, and facing direction/state
+ * Build Opcode 89 packet to update an entity's movement, position, velocity, facing direction, and animation state
  */
-function createPonyMovePacket(entityId, x, y, state = 0, updateId = 11) {
+function createPonyMovePacket(entityId, x, y, vx = 0, vy = 0, state = 0, animState = 0, updateId = 11) {
   const parts = [];
 
   // Packet Header: Opcode 89 (Update Entity)
@@ -161,10 +161,17 @@ function createPonyMovePacket(entityId, x, y, state = 0, updateId = 11) {
   header.writeUInt32LE(89 | (updateId << 8), 0);
   parts.push(header);
 
-  // flags: 1 (position) | 2 (state/animation/facing)
+  const hasVelocity = (vx !== 0 || vy !== 0);
+
+  // flags: 1 (position) | 2 (state/facing) | 65536 (animationState)
+  const flags = 1 | 2 | 65536;
+
   // extra: 16 (uint16 entity id) | 64 (f=0 so entity ID resolves correctly in ojw)
-  const flags = 1 | 2;
-  const extra = 16 | 64;
+  let extra = 16 | 64;
+  if (hasVelocity) {
+    extra |= (2 | 4);
+  }
+
   const c = encodeC(flags, extra);
   parts.push(writeVarInt(c));
 
@@ -179,8 +186,47 @@ function createPonyMovePacket(entityId, x, y, state = 0, updateId = 11) {
   posBuf.writeUInt16LE(Math.round(y) & 0xffff, 2);
   parts.push(posBuf);
 
-  // State byte (uint8): facing direction (bit 1: 0=right, 2=left) & movement state
+  // Velocity (if 6 & extra)
+  if (hasVelocity) {
+    const vBuf = Buffer.alloc(5);
+    vBuf.writeUInt8(255, 0);
+    vBuf.writeInt16LE(Math.round(vx), 1);
+    vBuf.writeInt16LE(Math.round(vy), 3);
+    parts.push(vBuf);
+  }
+
+  // State byte (uint8): Flag 2 (bit 1: 0=right, 2=left; bit 2: 4=moving)
   parts.push(Buffer.from([state & 0xff]));
+
+  // Animation State byte (uint8): Flag 65536 (0=stand, 1=walk, 2=trot/run)
+  parts.push(Buffer.from([animState & 0xff]));
+
+  return Buffer.concat(parts);
+}
+
+/**
+ * Build Opcode 136 packet to notify players that an entity started/stopped typing
+ */
+function createTypingPacket(entityId, isTyping = true, chatType = 0, updateId = 11) {
+  const parts = [];
+
+  // Packet Header: Opcode 136
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(136 | (updateId << 8), 0);
+  parts.push(header);
+
+  // Entity ID (uint16 LE)
+  const idBuf = Buffer.alloc(2);
+  idBuf.writeUInt16LE(entityId, 0);
+  parts.push(idBuf);
+
+  if (isTyping) {
+    // 0 = start typing, followed by chatType (uint8)
+    parts.push(Buffer.from([0, chatType & 0xff]));
+  } else {
+    // 1 = stop typing
+    parts.push(Buffer.from([1]));
+  }
 
   return Buffer.concat(parts);
 }
@@ -542,6 +588,7 @@ module.exports = {
   buildWorldInitPacket,
   createPonySpawnPacket,
   createPonyMovePacket,
+  createTypingPacket,
   createEntityRemovePacket,
   createChatPacket,
   createOpcode85ChatPacket,
