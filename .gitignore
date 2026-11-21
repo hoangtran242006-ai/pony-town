@@ -1,0 +1,24 @@
+node_modules/
+.system_generated/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+browser_evidence/
+scratch/
+archive/
+*.orig
+🎮 Pony Town_files/
+🎮 Pony Town.html
+
+# Ignore only root-level utility/debug scripts
+/*.js
+/*.json
+
+# Whitelist root production application files:
+!/server.js
+!/binary_protocol.js
+!/build_world_packet.js
+!/package.json
+!/package-lock.json

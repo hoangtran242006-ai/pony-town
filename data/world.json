@@ -1,0 +1,35 @@
+{
+  "width": 120,
+  "height": 90,
+  "spawn": { "x": 60, "y": 45 },
+  "trees": [
+    { "id": "t1", "x": 52, "y": 40, "apples": 3 },
+    { "id": "t2", "x": 68, "y": 40, "apples": 2 },
+    { "id": "t3", "x": 48, "y": 48, "apples": 4 },
+    { "id": "t4", "x": 72, "y": 48, "apples": 3 },
+    { "id": "t5", "x": 55, "y": 32, "apples": 2 },
+    { "id": "t6", "x": 65, "y": 32, "apples": 3 },
+    { "id": "t7", "x": 40, "y": 42, "apples": 1 },
+    { "id": "t8", "x": 80, "y": 42, "apples": 3 }
+  ],
+  "benches": [
+    { "id": "b1", "x": 58, "y": 48, "facing": "down" },
+    { "id": "b2", "x": 62, "y": 48, "facing": "down" },
+    { "id": "b3", "x": 58, "y": 42, "facing": "up" },
+    { "id": "b4", "x": 62, "y": 42, "facing": "up" }
+  ],
+  "lanterns": [
+    { "id": "l1", "x": 56, "y": 44, "lit": true },
+    { "id": "l2", "x": 64, "y": 44, "lit": true },
+    { "id": "l3", "x": 56, "y": 50, "lit": true },
+    { "id": "l4", "x": 64, "y": 50, "lit": true }
+  ],
+  "items": [
+    { "id": "i1", "x": 53, "y": 42, "type": "apple" },
+    { "id": "i2", "x": 67, "y": 42, "type": "apple" },
+    { "id": "i3", "x": 59, "y": 45, "type": "clover" },
+    { "id": "i4", "x": 61, "y": 45, "type": "clover" },
+    { "id": "i5", "x": 50, "y": 46, "type": "candy" },
+    { "id": "i6", "x": 70, "y": 46, "type": "flower" }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+	"homePage": {
+		"welcomeToTitle": "Welcome to {{title}}!",
+		"newHereQuestion": "New here?"
+	},
+	"cancelAccountDeletion": {
+		"title": "Cancel account deletion",
+		"body": "Are you sure you want to cancel account deletion?",
+		"success": {
+			"title": "Successfully canceled",
+			"body": "Account deletion has been canceled, you can now sign in to your {{title}} account."
+		},
+		"error": {
+			"title": "Error canceling account deletion"
+		}
+	},
+	"signInButton": "Sign in",
+	"signUpButton": "Create an account",
+	"signInOrUpModalCancelButton": "Cancel",
+	"signInModal": {
+		"title": "Sign in to {{title}}",
+		"continueWith": {
+			"lead": "Continue with",
+			"trail": ""
+		},
+		"continueWithLastUsed": "Continue with your last used social",
+		"orDifferentOption": "Or choose a different option",
+		"selectSocialToSignInWith": "Select your social account to sign in with",
+		"footerRegisterInstead": "Looking to register instead?"
+	},
+	"signUpModal": {
+		"title": "Create {{title}} account",
+		"selectSocialToSignUpWith": "Select a social account to connect to {{title}}",
+		"footerSignInInstead": "Already have an account?"
+	},
+	"signIntoUnlinkedSocialError": {
+		"lead": "No {{title}} account found using this",
+		"trail": "Account.",
+		"callToAction": {
+			"lead": "Select a different social account or",
+			"signUp": "sign up",
+			"trail": "instead."
+		}
+	},
+	"signInEventWarning": {
+		"lead": "This Pony Town server and the Pony Town ",
+		"trail": " have separate accounts.",
+		"mainGame": "main game",
+		"callToAction": {
+			"lead": "",
+			"signUp": "Sign up",
+			"trail": "if you don't have a {{title}} account yet."
+		},
+		"unlinkedSocialError": {
+			"lead": "This Pony Town server and the Pony Town ",
+			"trail": " have separate accounts. You cannot sign in to it using your Pony Town account."
+		}
+	},
+	"higherSupporterRequired": {
+		"title": "Account made!",
+		"body": "Your account has been made, but your supporter status needs to be verified before you can play.\n\nMake sure you used the same social you use for Pony Town and try signing in again in {{minutes}} minutes.\n\nIf you aren't a{{tier}} supporter, you can become one by clicking the button above this message!",
+		"tiers": {
+			"0": "",
+			"1": "",
+			"2": " Tier 2, Tier 3 or Tier 4",
+			"3": " Tier 3 or Tier 4"
+		}
+	},
+	"testServerSignUpText": "Test server is available to all supporters starting from Tier 2.\n\nSign up using the same social you use for your Pony Town account.\n\nAfter signing up, you may need to wait 30 minutes for your supporter benefits to apply.\n\nSign in using the same social 30 minutes later to enter the server."
+}

@@ -1,0 +1,24 @@
+{
+  "name": "pony-town",
+  "version": "1.0.0",
+  "description": "Full reconstructed Pony Town game project with real-time multiplayer, character creator, town simulation, and whisper bot support.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "pony-town",
+    "multiplayer",
+    "pixel-art",
+    "game",
+    "canvas",
+    "websocket"
+  ],
+  "author": "Antigravity Reconstruction",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

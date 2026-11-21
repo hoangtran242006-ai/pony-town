@@ -1,0 +1,9 @@
+{
+  "musicVolume": 0.5,
+  "sfxVolume": 0.8,
+  "zoom": 3,
+  "showMinimap": true,
+  "showNameTags": true,
+  "chatFilter": false,
+  "server": "safe"
+}

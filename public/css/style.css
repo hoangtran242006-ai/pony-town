@@ -1,0 +1,624 @@
+/* Pony Town Game Theme & Pixel Art UI */
+:root {
+  --pt-green-dark: #375225;
+  --pt-green-base: #5a8a3a;
+  --pt-green-light: #7cb342;
+  --pt-wood-dark: #4b321a;
+  --pt-wood-base: #7b542c;
+  --pt-wood-light: #b0804c;
+  --pt-ui-bg: rgba(30, 30, 35, 0.92);
+  --pt-ui-border: #4a4a55;
+  --pt-ui-gold: #f5b041;
+  --pt-ui-gold-hover: #f8c471;
+  --pt-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: #2b2b2b;
+  font-family: var(--pt-font);
+  color: #f0f0f0;
+}
+
+/* ==================================================
+   Game Viewport & Canvas
+   ================================================== */
+#game-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #3c5e26;
+}
+
+#gameCanvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  cursor: crosshair;
+}
+
+/* ==================================================
+   Start Screen & Lobby Overlay
+   ================================================== */
+.overlay-screen {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(circle at center, rgba(30, 40, 25, 0.85) 0%, rgba(15, 20, 15, 0.95) 100%);
+  z-index: 100;
+  transition: opacity 0.3s ease, visibility 0.3s;
+}
+
+.overlay-screen.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.title-card {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.title-logo {
+  font-size: 3rem;
+  font-weight: 900;
+  color: #ffe066;
+  text-shadow: 0 4px 0 #8c5b16, 0 8px 16px rgba(0,0,0,0.6);
+  letter-spacing: 2px;
+  margin-bottom: 6px;
+}
+
+.title-sub {
+  font-size: 1.1rem;
+  color: #d4ebd0;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.8);
+}
+
+.lobby-box {
+  background: var(--pt-ui-bg);
+  border: 3px solid var(--pt-wood-light);
+  border-radius: 12px;
+  padding: 24px 32px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 12px 30px rgba(0,0,0,0.7), inset 0 1px 1px rgba(255,255,255,0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.char-select-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.4);
+  border: 2px solid #555;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.char-canvas-preview {
+  width: 96px;
+  height: 96px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  margin-bottom: 8px;
+}
+
+.char-name-title {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: #fff;
+  text-shadow: 0 2px 4px #000;
+}
+
+.char-type-badge {
+  font-size: 0.8rem;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.char-buttons-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+}
+
+.pt-btn {
+  background: linear-gradient(to bottom, #74a840, #4c7725);
+  color: #fff;
+  border: 2px solid #95d452;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  box-shadow: 0 4px 6px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.4);
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.pt-btn:hover {
+  background: linear-gradient(to bottom, #86c04b, #598c2c);
+  border-color: #afff63;
+  transform: translateY(-1px);
+}
+
+.pt-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.6);
+}
+
+.pt-btn-play {
+  flex: 2;
+  font-size: 1.2rem;
+  padding: 12px 20px;
+  background: linear-gradient(to bottom, #f39c12, #d35400);
+  border-color: #f8c471;
+}
+
+.pt-btn-play:hover {
+  background: linear-gradient(to bottom, #f5b041, #e67e22);
+}
+
+.pt-btn-secondary {
+  flex: 1;
+  background: linear-gradient(to bottom, #4a5b6d, #2f3c49);
+  border-color: #70859c;
+}
+
+.pt-btn-secondary:hover {
+  background: linear-gradient(to bottom, #5a6e82, #394857);
+}
+
+.server-selector {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0,0,0,0.3);
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  font-size: 0.9rem;
+}
+
+.server-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #2ecc71;
+  box-shadow: 0 0 8px #2ecc71;
+  margin-right: 6px;
+}
+
+.controls-hint {
+  text-align: center;
+  font-size: 0.85rem;
+  color: #bbb;
+  line-height: 1.4;
+}
+
+/* ==================================================
+   In-Game HUD Overlays
+   ================================================== */
+.hud-top-left {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--pt-ui-bg);
+  border: 2px solid var(--pt-ui-border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  pointer-events: auto;
+  z-index: 10;
+}
+
+.hud-player-avatar {
+  width: 42px;
+  height: 42px;
+  image-rendering: pixelated;
+  background: rgba(0,0,0,0.3);
+  border-radius: 6px;
+  border: 1px solid #666;
+}
+
+.hud-player-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.hud-player-name {
+  font-weight: bold;
+  font-size: 0.95rem;
+  color: #fff;
+}
+
+.hud-online-badge {
+  font-size: 0.75rem;
+  color: #2ecc71;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-top-right {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  z-index: 10;
+}
+
+.hud-btn-icon {
+  background: var(--pt-ui-bg);
+  border: 2px solid var(--pt-ui-border);
+  border-radius: 8px;
+  width: 40px;
+  height: 40px;
+  color: #eee;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.4);
+  transition: all 0.15s ease;
+}
+
+.hud-btn-icon:hover {
+  background: #333;
+  border-color: #888;
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+/* Minimap */
+#minimap-container {
+  position: absolute;
+  top: 64px;
+  right: 14px;
+  width: 150px;
+  height: 120px;
+  background: rgba(20, 20, 20, 0.85);
+  border: 2px solid var(--pt-ui-border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+  z-index: 10;
+  display: none;
+}
+
+#minimapCanvas {
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+}
+
+/* ==================================================
+   Bottom Action Bar
+   ================================================== */
+#action-bar {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--pt-ui-bg);
+  border: 2px solid var(--pt-ui-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+  z-index: 20;
+}
+
+.action-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #ddd;
+  font-size: 0.85rem;
+  font-weight: bold;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 50px;
+  transition: all 0.1s ease;
+}
+
+.action-btn .icon {
+  font-size: 1.2rem;
+}
+
+.action-btn .key {
+  font-size: 0.65rem;
+  color: #aaa;
+  text-transform: uppercase;
+}
+
+.action-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: #fff;
+  color: #fff;
+  transform: translateY(-2px);
+}
+
+.action-btn.active {
+  background: linear-gradient(to bottom, #d35400, #a04000);
+  border-color: #f39c12;
+  color: #fff;
+}
+
+/* ==================================================
+   Chat Window & Input
+   ================================================== */
+#chat-container {
+  position: absolute;
+  bottom: 74px;
+  left: 14px;
+  width: 380px;
+  max-width: calc(100vw - 28px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.chat-log {
+  height: 160px;
+  background: rgba(18, 18, 22, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  padding: 8px 12px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #eee;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  backdrop-filter: blur(4px);
+  scroll-behavior: smooth;
+}
+
+.chat-log::-webkit-scrollbar {
+  width: 6px;
+}
+.chat-log::-webkit-scrollbar-thumb {
+  background: #555;
+  border-radius: 3px;
+}
+
+.chat-msg {
+  word-break: break-word;
+}
+.chat-msg .name {
+  font-weight: bold;
+  margin-right: 4px;
+}
+.chat-msg.public .name {
+  color: #ffda66;
+}
+.chat-msg.whisper {
+  color: #ff99ff;
+  font-style: italic;
+}
+.chat-msg.system {
+  color: #72d572;
+  font-weight: bold;
+}
+
+.chat-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--pt-ui-bg);
+  border: 1px solid var(--pt-ui-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+#chatInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+#chatInput::placeholder {
+  color: #888;
+}
+
+.chat-mode-pill {
+  font-size: 0.75rem;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #3a3a44;
+  color: #ffda66;
+  cursor: pointer;
+}
+
+/* ==================================================
+   Customizer Modal
+   ================================================== */
+.modal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.75);
+  z-index: 150;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.25s ease;
+}
+
+.modal.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+.modal-content {
+  background: var(--pt-ui-bg);
+  border: 3px solid var(--pt-wood-light);
+  border-radius: 12px;
+  width: 600px;
+  max-width: 95vw;
+  max-height: 90vh;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.8);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.modal-header {
+  padding: 14px 20px;
+  background: rgba(0,0,0,0.3);
+  border-bottom: 2px solid #444;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h2 {
+  font-size: 1.3rem;
+  color: #ffe066;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #aaa;
+  font-size: 1.5rem;
+  cursor: pointer;
+}
+.modal-close:hover {
+  color: #fff;
+}
+
+.customizer-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  padding: 16px;
+  gap: 20px;
+}
+
+.customizer-preview-pane {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: 180px;
+}
+
+#customizerCanvas {
+  width: 140px;
+  height: 140px;
+  image-rendering: pixelated;
+  background: rgba(0,0,0,0.3);
+  border: 2px solid #555;
+  border-radius: 8px;
+}
+
+.customizer-form-pane {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-right: 6px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-group label {
+  font-size: 0.85rem;
+  font-weight: bold;
+  color: #ccc;
+}
+
+.form-input, .form-select {
+  background: #25252b;
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 6px 10px;
+  color: #fff;
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-input {
+  -webkit-appearance: none;
+  border: 2px solid #555;
+  border-radius: 4px;
+  width: 40px;
+  height: 32px;
+  cursor: pointer;
+  background: none;
+}
+.color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.color-input::-webkit-color-swatch {
+  border: none;
+  border-radius: 2px;
+}
+
+.modal-footer {
+  padding: 12px 20px;
+  background: rgba(0,0,0,0.3);
+  border-top: 2px solid #444;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}

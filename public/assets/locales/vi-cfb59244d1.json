@@ -1,0 +1,70 @@
+{
+	"homePage": {
+		"welcomeToTitle": "Chào mừng bạn đến với {{title}}!",
+		"newHereQuestion": "Bạn là người mới?"
+	},
+	"cancelAccountDeletion": {
+		"title": "Hủy xóa tài khoản",
+		"body": "Bạn có chắc chắn muốn hủy xóa tài khoản không?",
+		"success": {
+			"title": "Đã hủy thành công",
+			"body": "Yêu cầu xóa tài khoản đã được hủy, hiện tại bạn có thể đăng nhập vào tài khoản {{title}} của mình."
+		},
+		"error": {
+			"title": "Lỗi khi hủy xóa tài khoản"
+		}
+	},
+	"signInButton": "Đăng nhập",
+	"signUpButton": "Tạo tài khoản",
+	"signInOrUpModalCancelButton": "Hủy",
+	"signInModal": {
+		"title": "Đăng nhập vào {{title}}",
+		"continueWith": {
+			"lead": "Tiếp tục với",
+			"trail": ""
+		},
+		"continueWithLastUsed": "Tiếp tục với tài khoản mạng xã hội sử dụng gần đây nhất",
+		"orDifferentOption": "Hoặc chọn một tùy chọn khác",
+		"selectSocialToSignInWith": "Chọn tài khoản mạng xã hội để đăng nhập",
+		"footerRegisterInstead": "Bạn muốn đăng ký tài khoản mới?"
+	},
+	"signUpModal": {
+		"title": "Tạo tài khoản {{title}}",
+		"selectSocialToSignUpWith": "Chọn một tài khoản mạng xã hội để kết nối với {{title}}",
+		"footerSignInInstead": "Bạn đã có tài khoản?"
+	},
+	"signIntoUnlinkedSocialError": {
+		"lead": "Không tìm thấy tài khoản {{title}} nào sử dụng",
+		"trail": "tài khoản này.",
+		"callToAction": {
+			"lead": "Chọn một tài khoản mạng xã hội khác hoặc",
+			"signUp": "đăng ký",
+			"trail": "thay thế."
+		}
+	},
+	"signInEventWarning": {
+		"lead": "Máy chủ Pony Town này và Pony Town ",
+		"trail": " có các tài khoản riêng biệt.",
+		"mainGame": "trò chơi chính",
+		"callToAction": {
+			"lead": "",
+			"signUp": "Đăng ký",
+			"trail": "nếu bạn chưa có tài khoản {{title}}."
+		},
+		"unlinkedSocialError": {
+			"lead": "Máy chủ Pony Town này và Pony Town ",
+			"trail": " có các tài khoản riêng biệt. Bạn không thể đăng nhập vào máy chủ này bằng tài khoản Pony Town của mình."
+		}
+	},
+	"higherSupporterRequired": {
+		"title": "Đã tạo tài khoản!",
+		"body": "Tài khoản của bạn đã được tạo, nhưng trạng thái người ủng hộ (supporter) cần được xác minh trước khi bạn có thể chơi.\n\nHãy đảm bảo bạn đã sử dụng cùng một tài khoản mạng xã hội mà bạn dùng cho Pony Town và thử đăng nhập lại sau {{minutes}} phút.\n\nNếu bạn không phải là người ủng hộ{{tier}}, bạn có thể trở thành người ủng hộ bằng cách nhấp vào nút phía trên thông báo này!",
+		"tiers": {
+			"0": "",
+			"1": "",
+			"2": " Tier 2, Tier 3 hoặc Tier 4",
+			"3": " Tier 3 hoặc Tier 4"
+		}
+	},
+	"testServerSignUpText": "Máy chủ thử nghiệm khả dụng cho tất cả những người ủng hộ từ Tier 2 trở lên.\n\nĐăng ký bằng cách sử dụng cùng một tài khoản mạng xã hội mà bạn dùng cho tài khoản Pony Town của mình.\n\nSau khi đăng ký, bạn có thể cần chờ 30 phút để các quyền lợi người ủng hộ được áp dụng.\n\nĐăng nhập bằng chính tài khoản mạng xã hội đó sau 30 phút để vào máy chủ."
+}
