@@ -37,6 +37,79 @@
 </pony-town-app>
 <script>
 document.body.setAttribute("data-host", window.location.origin + "/");
+
+// ==========================================
+// Multiplayer Runtime Instrumentation & Debugger
+// ==========================================
+(function() {
+  window.__wsEvents = [];
+  const _NativeWS = window.WebSocket;
+  window.WebSocket = function(url, proto) {
+    const ws = new _NativeWS(url, proto);
+    console.error('[WS-DEBUG] Created socket to:', url);
+    window.__wsEvents.push({ type: 'open', url, time: Date.now() });
+
+    ws.addEventListener('message', async (e) => {
+      let b = e.data instanceof Blob ? await e.data.arrayBuffer() : e.data;
+      if (b instanceof ArrayBuffer) {
+        const dv = new DataView(b);
+        const opcode = dv.byteLength >= 4 ? (dv.getUint32(0, true) & 0xff) : (dv.byteLength >= 1 ? dv.getUint8(0) : -1);
+        const updateId = dv.byteLength >= 4 ? (dv.getUint32(0, true) >>> 8) : 0;
+        console.error('[WS-RECV]', 'opcode:' + opcode, 'updateId:' + updateId, 'bytes:' + b.byteLength);
+        window.__wsEvents.push({ type: 'recv', opcode, updateId, bytes: b.byteLength, time: Date.now() });
+        if (window.__wsEvents.length > 30) window.__wsEvents.shift();
+        document.body.setAttribute('data-ws-events', JSON.stringify(window.__wsEvents));
+      }
+    });
+
+    const origSend = ws.send;
+    ws.send = function(data) {
+      if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+        const len = data.byteLength || data.length || 0;
+        window.__wsEvents.push({ type: 'send', bytes: len, time: Date.now() });
+        if (window.__wsEvents.length > 30) window.__wsEvents.shift();
+        document.body.setAttribute('data-ws-events', JSON.stringify(window.__wsEvents));
+      }
+      return origSend.apply(this, arguments);
+    };
+
+    return ws;
+  };
+
+  setInterval(() => {
+    try {
+      const comp = window.ng ? window.ng.getComponent(document.querySelector('pony-town-app')) : null;
+      let game = null;
+      if (comp && comp.gameService && comp.gameService.game) {
+        game = comp.gameService.game;
+      }
+      if (!game) {
+        for (const k of Object.keys(window)) {
+          if (window[k] && window[k].map && window[k].paletteManager) game = window[k];
+        }
+      }
+      const rawEntities = (game && game.map && game.map.ha && game.map.ha.Ub) ? game.map.ha.Ub : [];
+      const entities = rawEntities.map(e => ({
+        id: e.j,
+        name: e.B,
+        type: e.type,
+        x: e.x,
+        y: e.y,
+        bounds: e.regionBounds,
+        clientFlags: e.clientFlags
+      }));
+
+      document.body.setAttribute('data-debug-game', JSON.stringify({
+        hasComp: !!comp,
+        hasGame: !!game,
+        entityCount: entities.length,
+        entities: entities
+      }));
+    } catch (err) {
+      document.body.setAttribute('data-debug-error', err.message);
+    }
+  }, 500);
+})();
 </script>
 
 <script id="oauth-providers" type="application/json">[{"id":"google","connectOnly":true},{"id":"discord"},{"id":"twitter"},{"id":"tiktok","connectOnly":true},{"id":"vkontakte"},{"id":"twitch"},{"id":"steam"},{"id":"telegram","connectOnly":true},{"id":"github","connectOnly":true},{"id":"patreon","connectOnly":true},{"id":"facebook","disabled":true,"connectOnly":true}]</script>

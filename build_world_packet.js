@@ -82,6 +82,20 @@ function encodeC(flags, extra) {
   return c >>> 0;
 }
 
+const OIN_LOOK_KEY = 0x693c688f;
+
+function obfuscateLook(lookBuf) {
+  if (!lookBuf) return Buffer.alloc(0);
+  const out = Buffer.from(lookBuf);
+  let i = 0;
+  for (let n = 0; n < out.length; n++) {
+    out[n] ^= (OIN_LOOK_KEY >>> i) & 0xff;
+    i += 8;
+    if (i === 32) i = 0;
+  }
+  return out;
+}
+
 /**
  * Build Opcode 88 packet to spawn a pony entity in the world
  */
@@ -115,9 +129,10 @@ function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, 
   // 2&flags: L (state / animation) = uint8
   parts.push(Buffer.from([state & 0xff]));
 
-  // 16&flags: S (look data) = length-prefixed bytes
-  parts.push(writeLen(lookBuf.length));
-  parts.push(lookBuf);
+  // 16&flags: S (look data) = length-prefixed bytes (obfuscated with oin so client owi() decodes correctly)
+  const obfLook = obfuscateLook(lookBuf);
+  parts.push(writeLen(obfLook.length));
+  parts.push(obfLook);
 
   // 64&flags: B (name) = length-prefixed string (with Server-Authoritative [DEV] prefix if isDev)
   let cleanName = name || 'Pony';

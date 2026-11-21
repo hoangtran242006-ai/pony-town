@@ -521,22 +521,28 @@ wss.on('connection', (ws, req) => {
   }
 
   // 2. Synchronize existing players to this new client (Opcode 88)
-  for (const [otherWs, otherSession] of activeSessions.entries()) {
-    if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
-      const spawnOther = worldPacket.createPonySpawnPacket(
-        otherSession.entityId,
-        otherSession.name,
-        otherSession.lookBuf,
-        otherSession.x,
-        otherSession.y,
-        otherSession.z,
-        0,
-        nextUpdateId(),
-        otherSession.isDev
-      );
-      ws.send(spawnOther);
+  // Give new client 200ms to complete local map parsing before spawning existing entities
+  setTimeout(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      for (const [otherWs, otherSession] of activeSessions.entries()) {
+        if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+          const spawnOther = worldPacket.createPonySpawnPacket(
+            otherSession.entityId,
+            otherSession.name,
+            otherSession.lookBuf,
+            otherSession.x,
+            otherSession.y,
+            otherSession.z,
+            0,
+            nextUpdateId(),
+            otherSession.isDev
+          );
+          ws.send(spawnOther);
+          console.log(`[WS] Synced existing entity ${otherSession.entityId} ("${otherSession.name}") to new entity ${session.entityId}`);
+        }
+      }
     }
-  }
+  }, 200);
 
   // 3. Broadcast new player spawn (Opcode 88) to all existing clients
   const spawnNewPkt = worldPacket.createPonySpawnPacket(
@@ -550,9 +556,10 @@ wss.on('connection', (ws, req) => {
     nextUpdateId(),
     session.isDev
   );
-  for (const [otherWs] of activeSessions.entries()) {
+  for (const [otherWs, otherSession] of activeSessions.entries()) {
     if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
       otherWs.send(spawnNewPkt);
+      console.log(`[WS] Broadcasted new entity ${session.entityId} ("${session.name}") to entity ${otherSession.entityId}`);
     }
   }
 
