@@ -1,6 +1,7 @@
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 const binaryProtocol = require('./binary_protocol');
@@ -10,9 +11,17 @@ const PORT = process.env.PORT || 3000;
 const app = express();
 const server = http.createServer(app);
 
+// Authentication Secrets & Reserved Names
+const MAGIC_SECRET = process.env.MAGIC_SECRET || 'pt_magic_secret_2026_9f82d1c6';
+const DEV_SECRET = process.env.DEV_SECRET || 'pt_dev_master_akira_8832';
+const RESERVED_NAMES_STR = process.env.RESERVED_NAMES || 'Akira,Hoàng<3,Admin,Developer,Mod,PonyTown';
+const RESERVED_NAMES = RESERVED_NAMES_STR.split(',').map(s => s.trim().toLowerCase());
+
 // Request logger
 app.use((req, res, next) => {
-  console.log(`[HTTP] ${req.method} ${req.url}`);
+  if (!req.url.startsWith('/assets/')) {
+    console.log(`[HTTP] ${req.method} ${req.url}`);
+  }
   next();
 });
 
@@ -20,12 +29,14 @@ app.use((req, res, next) => {
 const CHARACTERS_FILE = path.join(__dirname, 'data/characters.json');
 const WORLD_FILE = path.join(__dirname, 'data/world.json');
 const SETTINGS_FILE = path.join(__dirname, 'data/settings.json');
+const SESSIONS_FILE = path.join(__dirname, 'data/sessions.json');
+const PLAYERS_FILE = path.join(__dirname, 'data/players.json');
 
 // Middleware
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, x-session-token');
   if (req.method === 'OPTIONS') {
     return res.sendStatus(200);
   }
@@ -34,6 +45,77 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.raw({ type: 'application/octet-stream', limit: '50mb' }));
+
+// Helper to read/write JSON safely
+function readJson(file, defaultVal) {
+  try {
+    if (fs.existsSync(file)) {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    }
+  } catch (e) {
+    console.error(`Error reading ${file}:`, e.message);
+  }
+  return defaultVal;
+}
+
+function writeJson(file, data) {
+  try {
+    const dir = path.dirname(file);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    console.error(`Error writing ${file}:`, e.message);
+  }
+  return false;
+}
+
+function getSessions() {
+  return readJson(SESSIONS_FILE, {});
+}
+
+function saveSessions(sessions) {
+  writeJson(SESSIONS_FILE, sessions);
+}
+
+function getPlayers() {
+  return readJson(PLAYERS_FILE, {});
+}
+
+function savePlayers(players) {
+  writeJson(PLAYERS_FILE, players);
+}
+
+/**
+ * Calculate SHA-256 Signature: first 10 hex characters of SHA-256("${name}|${t}|${MAGIC_SECRET}")
+ */
+function calculateSignature(name, t, secret = MAGIC_SECRET) {
+  const hash = crypto.createHash('sha256').update(`${name}|${t}|${secret}`).digest('hex');
+  return hash.substring(0, 10);
+}
+
+/**
+ * Extract session object from Express or WebSocket request
+ */
+function getSessionFromReq(req) {
+  let token = req.headers['x-session-token'];
+  if (!token && req.query && (req.query.token || req.query.session_token)) {
+    token = req.query.token || req.query.session_token;
+  }
+  if (!token && req.headers && req.headers.cookie) {
+    const match = req.headers.cookie.match(/pt_session=([^;]+)/);
+    if (match) token = match[1].trim();
+  }
+  if (!token && req.url) {
+    try {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      token = parsedUrl.searchParams.get('token') || parsedUrl.searchParams.get('session_token');
+    } catch (e) {}
+  }
+  if (!token) return null;
+  const sessions = getSessions();
+  return sessions[token] || null;
+}
 
 // Map Ingestion APIs for Ground-Truth Sync from live web
 app.post('/api/ingest_map', (req, res) => {
@@ -61,6 +143,131 @@ app.get('/api/extracted_entities', (req, res) => {
   res.json({ entities: [], playerPos: null });
 });
 
+// ==========================================
+// Authentication APIs (Magic Link & Dev Auth)
+// ==========================================
+
+// Verify Magic Link or Developer Auth
+app.post('/api/auth/verify', (req, res) => {
+  const { dev_auth, u, t, s } = req.body;
+  const sessions = getSessions();
+  const players = getPlayers();
+
+  // 1. Developer Authentication via Secret
+  if (dev_auth) {
+    if (dev_auth !== DEV_SECRET) {
+      console.warn(`[AUTH] Failed dev auth attempt with key: "${dev_auth}"`);
+      return res.status(403).json({ success: false, error: 'Mã xác thực Developer không chính xác!' });
+    }
+
+    const devName = (u && u.trim()) || 'Akira';
+    const sessionToken = crypto.randomBytes(16).toString('hex');
+    sessions[sessionToken] = {
+      token: sessionToken,
+      name: devName,
+      isDev: true,
+      createdAt: Date.now()
+    };
+    saveSessions(sessions);
+
+    if (!players[devName]) {
+      players[devName] = { name: devName, isDev: true, characters: [], createdAt: Date.now() };
+    } else {
+      players[devName].isDev = true;
+    }
+    savePlayers(players);
+
+    console.log(`[AUTH] Developer "${devName}" authenticated successfully! Session: ${sessionToken}`);
+    return res.json({
+      success: true,
+      session_token: sessionToken,
+      name: devName,
+      isDev: true
+    });
+  }
+
+  // 2. Normal Magic Link Verification
+  if (!u || !t || !s) {
+    return res.status(400).json({ success: false, error: 'Thiếu thông tin xác thực Magic Link (u, t, s)!' });
+  }
+
+  const playerName = u.trim();
+  const timestamp = Number(t);
+  const signature = s.trim();
+
+  // Check 24-hour expiration
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (isNaN(timestamp) || Math.abs(nowSec - timestamp) > 86400) {
+    return res.status(403).json({ success: false, error: 'Magic Link đã hết hạn (chỉ có hiệu lực trong 24 giờ). Vui lòng nhận link mới!' });
+  }
+
+  // Verify SHA-256 signature
+  const expectedSig = calculateSignature(playerName, timestamp);
+  if (signature.toLowerCase() !== expectedSig.toLowerCase()) {
+    console.warn(`[AUTH] Tampered link detected for "${playerName}": received "${signature}", expected "${expectedSig}"`);
+    return res.status(403).json({ success: false, error: 'Link không hợp lệ hoặc đã bị chỉnh sửa!' });
+  }
+
+  // Check Reserved Names (protect developer and official admin names)
+  if (RESERVED_NAMES.includes(playerName.toLowerCase())) {
+    console.warn(`[AUTH] Unauthorized attempt to use reserved name "${playerName}" via standard Magic Link`);
+    return res.status(403).json({
+      success: false,
+      error: `Tên nhân vật "${playerName}" đã được bảo vệ độc quyền cho Developer/Admin! Vui lòng dùng tên khác.`
+    });
+  }
+
+  // Generate 32-char session token and persist
+  const sessionToken = crypto.randomBytes(16).toString('hex');
+  sessions[sessionToken] = {
+    token: sessionToken,
+    name: playerName,
+    isDev: false,
+    createdAt: Date.now()
+  };
+  saveSessions(sessions);
+
+  // Load or create player profile
+  if (!players[playerName]) {
+    players[playerName] = {
+      name: playerName,
+      isDev: false,
+      characters: [],
+      createdAt: Date.now()
+    };
+    savePlayers(players);
+  }
+
+  console.log(`[AUTH] Player "${playerName}" authenticated via Magic Link! Session: ${sessionToken}`);
+  return res.json({
+    success: true,
+    session_token: sessionToken,
+    name: playerName,
+    isDev: false
+  });
+});
+
+// Restore session from localStorage token
+app.post('/api/auth/session', (req, res) => {
+  const { session_token } = req.body;
+  if (!session_token) {
+    return res.status(400).json({ success: false, error: 'Thiếu session_token' });
+  }
+
+  const sessions = getSessions();
+  const session = sessions[session_token];
+  if (!session) {
+    return res.status(401).json({ success: false, error: 'Phiên đăng nhập đã hết hạn hoặc không tồn tại' });
+  }
+
+  res.json({
+    success: true,
+    session_token: session.token,
+    name: session.name,
+    isDev: !!session.isDev
+  });
+});
+
 // Static Asset Aliases & Serving
 app.use('/assets/styles', express.static(path.join(__dirname, 'public/assets/style')));
 app.use('/assets/style', express.static(path.join(__dirname, 'public/assets/style')));
@@ -86,28 +293,6 @@ app.use(['/%F0%9F%8E%AE%20Pony%20Town_files', '/🎮 Pony Town_files'], express.
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.ico')));
 app.get('/apple-touch-icon.png', (req, res) => res.sendFile(path.join(__dirname, 'public/apple-touch-icon.png')));
 app.get('/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public/logo.png')));
-
-// Helper to read/write JSON safely
-function readJson(file, defaultVal) {
-  try {
-    if (fs.existsSync(file)) {
-      return JSON.parse(fs.readFileSync(file, 'utf8'));
-    }
-  } catch (e) {
-    console.error(`Error reading ${file}:`, e.message);
-  }
-  return defaultVal;
-}
-
-function writeJson(file, data) {
-  try {
-    fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
-    return true;
-  } catch (e) {
-    console.error(`Error writing ${file}:`, e.message);
-  }
-  return false;
-}
 
 // Global active player sessions map
 let nextEntityId = 10;
@@ -151,23 +336,28 @@ app.get(['/api/servers', '/api/refetch-servers'], (req, res) => {
   ]);
 });
 
-// Account info
+// Account info (Session-aware)
 app.all(['/api1/account', '/api/account'], (req, res) => {
+  const session = getSessionFromReq(req);
   const characters = readJson(CHARACTERS_FILE, []);
   const activeChar = characters[0] || null;
   const onlineCount = (wss && wss.clients) ? Math.max(1, wss.clients.size) : 1;
   const accepts = req.headers['accept'] || '';
 
+  const isDev = session ? !!session.isDev : false;
+  const playerName = session ? session.name : 'Hoàng<3';
+  const displayName = isDev ? `[DEV] ${playerName}` : playerName;
+
   if (req.method === 'POST' || accepts.includes('application/octet-stream')) {
     res.setHeader('Content-Type', 'application/octet-stream');
-    return res.send(binaryProtocol.writeAccountResponse('Hoàng<3', activeChar, onlineCount));
+    return res.send(binaryProtocol.writeAccountResponse(displayName, activeChar, onlineCount));
   }
 
   res.json({
-    id: 'aaaa1111bbbb2222cccc3333',
-    name: 'Hoàng<3',
-    role: 'player',
-    supporter: 4,
+    id: isDev ? 'dev-00000000000000000001' : (session ? 'usr-' + session.token.slice(0, 16) : 'aaaa1111bbbb2222cccc3333'),
+    name: displayName,
+    role: isDev ? 'developer' : 'player',
+    supporter: isDev ? 4 : 0,
     characterLimit: 100,
     character: activeChar
   });
@@ -278,10 +468,20 @@ wss.on('connection', (ws, req) => {
   const assignedEntityId = ++nextEntityId;
   const sessionIndex = activeSessions.size;
 
+  // Retrieve player session
+  let authSession = getSessionFromReq(req);
+  const isDev = authSession ? !!authSession.isDev : false;
+
   // Pick unique authentic pony look & name preset
   const preset = worldPacket.PONY_LOOK_PRESETS[sessionIndex % worldPacket.PONY_LOOK_PRESETS.length];
   const charLookBuf = Buffer.from(preset.look, 'base64');
-  const charName = sessionIndex === 0 ? 'Pony' : `${preset.name}`;
+  
+  let charName = authSession ? authSession.name : (sessionIndex === 0 ? 'Pony' : `${preset.name}`);
+  if (isDev) {
+    charName = charName.startsWith('[DEV]') ? charName : `[DEV] ${charName}`;
+  } else {
+    charName = charName.replace(/^\[DEV\]\s*/i, '');
+  }
 
   // Slight jitter around scenic meadow spawn
   const spawnX = SPAWN_CENTER.x + (sessionIndex % 4) * 24 - 36;
@@ -294,11 +494,12 @@ wss.on('connection', (ws, req) => {
     lookBuf: charLookBuf,
     x: spawnX,
     y: spawnY,
-    z: 0
+    z: 0,
+    isDev: isDev
   };
 
   activeSessions.set(ws, session);
-  console.log(`[WS] Client connected: entityId=${assignedEntityId}, name="${charName}", pos=(${spawnX}, ${spawnY}) (total active: ${activeSessions.size})`);
+  console.log(`[WS] Client connected: entityId=${assignedEntityId}, name="${charName}", isDev=${isDev}, pos=(${spawnX}, ${spawnY}) (total active: ${activeSessions.size})`);
 
   // Heartbeat ping interval
   const pingInterval = setInterval(() => {
@@ -312,9 +513,9 @@ wss.on('connection', (ws, req) => {
   // 1. Send world init packet to new client (initializes WebGL map and assigns self entityId)
   try {
     const initChar = { name: charName, lookBuf: charLookBuf };
-    const initPkt = worldPacket.buildWorldInitPacket(initChar, assignedEntityId, spawnX, spawnY);
+    const initPkt = worldPacket.buildWorldInitPacket(initChar, assignedEntityId, spawnX, spawnY, isDev);
     ws.send(initPkt);
-    console.log(`[WS] Sent initial binary world packet (${initPkt.length} bytes) to entity ${assignedEntityId}`);
+    console.log(`[WS] Sent initial binary world packet (${initPkt.length} bytes, isDev=${isDev}) to entity ${assignedEntityId}`);
   } catch (err) {
     console.error('[WS] Error sending world init packet:', err.message);
   }
@@ -330,7 +531,8 @@ wss.on('connection', (ws, req) => {
         otherSession.y,
         otherSession.z,
         0,
-        nextUpdateId()
+        nextUpdateId(),
+        otherSession.isDev
       );
       ws.send(spawnOther);
     }
@@ -345,7 +547,8 @@ wss.on('connection', (ws, req) => {
     session.y,
     session.z,
     0,
-    nextUpdateId()
+    nextUpdateId(),
+    session.isDev
   );
   for (const [otherWs] of activeSessions.entries()) {
     if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
@@ -390,7 +593,6 @@ wss.on('connection', (ws, req) => {
 
       // Method 1: actionWithReturn -> resolve packet: 255 (resolve), 1 (method 1), messageId, 0 (undefined)
       if (buf.length >= 2 && buf[0] === 1) {
-        const actionId = buf[1];
         ws.send(Buffer.from([255, 1, 1, 0]));
         return;
       }
@@ -401,16 +603,11 @@ wss.on('connection', (ws, req) => {
         // Action 194: Say message
         if (actionType === 194) {
           try {
-            // Read string from message buffer:
-            // Skip actionType byte (1), then read fields: [12, chatType], [3, msgId], [14, targetId], [6, text]
             let offset = 2;
             const chatType = buf.readUInt8(offset); offset += 1;
-            // Varint msgId
             while (offset < buf.length && (buf[offset] & 0x80)) offset++;
-            offset++; // last byte of varint
-            // TargetId uint16
+            offset++;
             offset += 2;
-            // Varint string length
             let strLen = 0, shift = 0;
             while (offset < buf.length) {
               const b = buf[offset++];
@@ -418,13 +615,13 @@ wss.on('connection', (ws, req) => {
               if (!(b & 0x80)) break;
               shift += 7;
             }
-            strLen -= 1; // decoded length
+            strLen -= 1;
             if (strLen > 0 && offset + strLen <= buf.length) {
               const text = buf.toString('utf8', offset, offset + strLen);
               console.log(`[CHAT] ${session.name} (${session.entityId}): "${text}"`);
 
               // Broadcast chat via Opcode 87 to all connected clients (including sender)
-              const chatPkt = worldPacket.createChatPacket(session.entityId, session.name, text, chatType, nextUpdateId());
+              const chatPkt = worldPacket.createChatPacket(session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev);
               for (const [clientWs] of activeSessions.entries()) {
                 if (clientWs.readyState === WebSocket.OPEN) {
                   clientWs.send(chatPkt);
@@ -445,7 +642,7 @@ wss.on('connection', (ws, req) => {
     activeSessions.delete(ws);
     console.log(`[WS] Client disconnected: entityId=${session.entityId}, name="${session.name}" (remaining: ${activeSessions.size})`);
 
-    // Broadcast removal to all remaining clients via Opcode 89 (flags: 0x2000000)
+    // Broadcast removal to all remaining clients via Opcode 89
     const removePkt = worldPacket.createEntityRemovePacket(session.entityId, nextUpdateId());
     for (const [otherWs] of activeSessions.entries()) {
       if (otherWs.readyState === WebSocket.OPEN) {
@@ -463,6 +660,7 @@ server.listen(PORT, () => {
   ----------------------------------------------------
   Local URL:    http://localhost:${PORT}
   WebSocket:    ws://localhost:${PORT}/ws
+  Short Domain: https://pt.akira-dev.me
 ======================================================
   `);
 });

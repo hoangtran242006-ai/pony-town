@@ -9,7 +9,7 @@
   <style>
     body,html{margin:0;padding:0;background:#333;color:#eee;font-family:var(--bs-font-sans-serif);font-size:14px}
     .playing{overscroll-behavior:contain}
-    #loading{position:fixed;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;height:100%;font-size:34px;line-height:34px;color:#9c9c9c;line-height:inherit}
+    #loading{position:fixed;display:flex;flex-direction:column;justify-content:center;align-items:center;width:100%;height:100%;font-size:34px;line-height:34px;color:#9c9c9c;line-height:inherit;z-index:9999}
     #loading>img{image-rendering:crisp-edges;image-rendering:pixelated;width:74px;height:86px;margin-bottom:30px;opacity:.6}
     #loading>#loading-label:after{content:" ";display:inline-block;width:30px}
     @keyframes loading{0%,99%{height:0}to{height:35px}}
@@ -17,6 +17,11 @@
     .loading-error-btn{color:#d9534f;background:none;display:inline-block;font-weight:400;text-align:center;vertical-align:middle;margin:0;padding:.375rem .75rem;border:1px solid #d9534f;border-radius:.25rem;font-size:1rem;line-height:1.5;-webkit-appearance:none;-moz-appearance:none;appearance:none;text-decoration:none}
     .loading-error-btn:hover{background:#d9534f;color:#fff;text-decoration:none}
     .top-menu-button{margin-left:5px;z-index:2}
+    .auth-error-card{text-align:center;max-width:480px;margin:20px;padding:28px 24px;background:#22252a;border:2px solid #e74c3c;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,0.6);color:#f1f2f6;font-family:sans-serif}
+    .auth-error-card h2{color:#ff6b6b;font-size:20px;margin:12px 0 10px 0}
+    .auth-error-card p{color:#cbd5e1;font-size:14px;line-height:1.6;margin:0 0 16px 0}
+    .auth-error-card code{background:#334155;color:#38bdf8;padding:2px 6px;border-radius:4px;font-family:monospace}
+    .auth-badge{display:inline-block;background:#e74c3c;color:#fff;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:bold;letter-spacing:1px;text-transform:uppercase}
   </style>
   <link rel="stylesheet" href="/assets/style/style-50eb997a97.css">
   <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">
@@ -40,11 +45,105 @@ document.body.setAttribute("data-host", window.location.origin + "/");
 <script>
 var updatingIndexCache = !1;
 function isApp() { return !1; }
-var p = document.createElement("script");
-p.src = "/assets/scripts/bootstrap-33FTUFJL.js";
-p.type = "module";
-p.async = !0;
-document.body.appendChild(p);
+
+// ==========================================
+// Magic Link & Session Preflight Verifier
+// ==========================================
+(async function initAuth() {
+  const params = new URLSearchParams(window.location.search);
+  const u = params.get('u');
+  const t = params.get('t');
+  const s = params.get('s');
+  const devAuth = params.get('dev_auth');
+  let savedToken = localStorage.getItem('pt_session_token');
+
+  function renderAuthError(title, message) {
+    const loadingElem = document.getElementById('loading');
+    if (loadingElem) {
+      loadingElem.innerHTML = `
+        <div class="auth-error-card">
+          <span class="auth-badge">Xác Thực Thất Bại</span>
+          <h2>${title}</h2>
+          <p>${message}</p>
+          <div style="font-size: 13px; color: #94a3b8; border-top: 1px solid #334155; padding-top: 14px;">
+            Hãy quay lại tab <b>Pony Town gốc</b> và gõ lệnh <code>-play</code> trong khung chat để nhận Magic Link chính thức.
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  function launchClient() {
+    var p = document.createElement("script");
+    p.src = "/assets/scripts/bootstrap-33FTUFJL.js";
+    p.type = "module";
+    p.async = !0;
+    document.body.appendChild(p);
+  }
+
+  let authPayload = null;
+  if (devAuth) {
+    authPayload = { dev_auth: devAuth, u: u || 'Akira' };
+  } else if (u && t && s) {
+    authPayload = { u, t, s };
+  } else if (savedToken) {
+    authPayload = { session_token: savedToken };
+  } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    // Development convenience on localhost: default to dev login
+    authPayload = { dev_auth: 'pt_dev_master_akira_8832', u: 'Akira' };
+  }
+
+  if (!authPayload) {
+    renderAuthError(
+      'Yêu Cầu Magic Link',
+      'Bạn cần truy cập thông qua đường dẫn Magic Link được cấp bởi Bot Pony Town để tham gia máy chủ.'
+    );
+    return;
+  }
+
+  try {
+    const endpoint = authPayload.session_token ? '/api/auth/session' : '/api/auth/verify';
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(authPayload)
+    });
+
+    const data = await resp.json();
+
+    if (!resp.ok || !data.success) {
+      if (authPayload.session_token) {
+        localStorage.removeItem('pt_session_token');
+        renderAuthError(
+          'Phiên Đăng Nhập Hết Hạn',
+          'Phiên làm việc trước đó của bạn đã hết hạn. Vui lòng nhận Magic Link mới từ Bot!'
+        );
+      } else {
+        renderAuthError(
+          'Link Không Hợp Lệ',
+          data.error || 'Đường dẫn đã bị chỉnh sửa hoặc chữ ký không khớp!'
+        );
+      }
+      return;
+    }
+
+    // Authentication succeeded
+    if (data.session_token) {
+      localStorage.setItem('pt_session_token', data.session_token);
+      document.cookie = `pt_session=${data.session_token}; path=/; max-age=604800; SameSite=Lax`;
+    }
+
+    // Clean URL query parameters smoothly without reloading
+    if (window.location.search) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
+    launchClient();
+  } catch (err) {
+    console.error('[AUTH] Verification error:', err);
+    renderAuthError('Lỗi Kết Nối', 'Không thể kết nối đến máy chủ xác thực.');
+  }
+})();
 </script>
 </body>
 </html>

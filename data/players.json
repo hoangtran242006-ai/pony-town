@@ -1,0 +1,14 @@
+{
+  "TwilightSparkle": {
+    "name": "TwilightSparkle",
+    "isDev": false,
+    "characters": [],
+    "createdAt": 1795261785077
+  },
+  "Akira": {
+    "name": "Akira",
+    "isDev": true,
+    "characters": [],
+    "createdAt": 1795261785088
+  }
+}

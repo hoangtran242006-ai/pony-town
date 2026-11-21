@@ -85,7 +85,7 @@ function encodeC(flags, extra) {
 /**
  * Build Opcode 88 packet to spawn a pony entity in the world
  */
-function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, updateId = 10) {
+function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, updateId = 10, isDev = false) {
   const parts = [];
 
   // Packet Header: Opcode 88 (Create Entity)
@@ -101,13 +101,12 @@ function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, 
   const c = encodeC(flags, extra);
   parts.push(writeVarInt(c));
 
-  // Entity ID (uint16 LE because 16&extra and not 8&extra)
+  // Entity ID (uint16 LE)
   const idBuf = Buffer.alloc(2);
   idBuf.writeUInt16LE(entityId, 0);
   parts.push(idBuf);
 
-  // Position:
-  // oS9(e, undefined) -> HF(e) = uint16 LE
+  // Position: x (uint16 LE), y (uint16 LE)
   const posBuf = Buffer.alloc(4);
   posBuf.writeUInt16LE(Math.round(x), 0);
   posBuf.writeUInt16LE(Math.round(y), 2);
@@ -120,8 +119,14 @@ function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, 
   parts.push(writeLen(lookBuf.length));
   parts.push(lookBuf);
 
-  // 64&flags: B (name) = length-prefixed string
-  parts.push(writeString(name));
+  // 64&flags: B (name) = length-prefixed string (with Server-Authoritative [DEV] prefix if isDev)
+  let cleanName = name || 'Pony';
+  if (isDev) {
+    cleanName = cleanName.startsWith('[DEV]') ? cleanName : `[DEV] ${cleanName}`;
+  } else {
+    cleanName = cleanName.replace(/^\[DEV\]\s*/i, '');
+  }
+  parts.push(writeString(cleanName));
 
   return Buffer.concat(parts);
 }
@@ -187,7 +192,7 @@ function createEntityRemovePacket(entityId, updateId = 12) {
 /**
  * Build Opcode 87 chat broadcast packet
  */
-function createChatPacket(entityId, name, text, chatType = 0, updateId = 13) {
+function createChatPacket(entityId, name, text, chatType = 0, updateId = 13, isDev = false) {
   const parts = [];
 
   // Packet Header: Opcode 87
@@ -202,7 +207,11 @@ function createChatPacket(entityId, name, text, chatType = 0, updateId = 13) {
   parts.push(writeVarInt(0));
 
   // Zp: sender name (Hq / string)
-  parts.push(writeString(name));
+  let cleanName = name || 'Pony';
+  if (isDev) {
+    cleanName = cleanName.startsWith('[DEV]') ? cleanName : `[DEV] ${cleanName}`;
+  }
+  parts.push(writeString(cleanName));
 
   // _p: is whisper / boolean (HJ: 1 = true, 0 = false)
   parts.push(Buffer.from([0]));
@@ -256,7 +265,7 @@ const PONY_LOOK_PRESETS = [
   }
 ];
 
-function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3120, spawnY = 2350) {
+function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3120, spawnY = 2350, isDev = false) {
   const parts = [];
 
   // ==========================================
@@ -313,7 +322,12 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   entityIdBuf.writeUInt16LE(playerEntityId, 0);
   parts.push(entityIdBuf);     // K: entity ID
   
-  const charName = (activeChar && activeChar.name) || 'Pony';
+  let charName = (activeChar && activeChar.name) || 'Pony';
+  if (isDev) {
+    charName = charName.startsWith('[DEV]') ? charName : `[DEV] ${charName}`;
+  } else {
+    charName = charName.replace(/^\[DEV\]\s*/i, '');
+  }
   parts.push(writeString(charName)); // B: character name
   
   const fallbackLook = Buffer.from('aAB/9EXB0wwgAA', 'base64');
@@ -323,7 +337,7 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   parts.push(writeLen(lookBuf.length));
   parts.push(lookBuf);         // S: look data
   parts.push(writeObjectId('111122223333444455556666')); // Nd: ObjectId
-  parts.push(Buffer.from([0])); // wf: HU(i) -> false (no active tag)
+  parts.push(Buffer.from([isDev ? 1 : 0])); // wf: HU(i) -> developer tag active if isDev
   parts.push(Buffer.from([0])); // dq: HJ(i) -> false
   parts.push(Buffer.from([0])); // lc: HT(i) -> 0
   parts.push(Buffer.from([0])); // fq: HJ(i) -> false
@@ -331,8 +345,8 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   // 6. jq: HJ(i) -> boolean
   parts.push(Buffer.from([0]));
 
-  // 7. sa: HT(i) -> 0 (normal player)
-  parts.push(Buffer.from([0]));
+  // 7. sa: HT(i) -> tier 4 for dev, 0 for player
+  parts.push(Buffer.from([isDev ? 4 : 0]));
 
   // 8. kq: H6(i) -> account settings (empty object: 0 keys)
   parts.push(writeLen(0));
@@ -406,13 +420,12 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   }
 
   // ==========================================
-  // CASE 110: SPAWN PLAYER AT SCENIC OPEN LAWN
+  // CASE 110: SPAWN PLAYER AT SCENIC OPEN PARK PATH
   // ==========================================
   const h110 = Buffer.alloc(4);
   h110.writeUInt32LE(110 | (5 << 8), 0); // opcode 110, updateId 5
   parts.push(h110);
 
-  // Spacious, scenic meadow near central pathway: x=2600, y=2200
   const spawnXBuf = Buffer.alloc(2);
   spawnXBuf.writeUInt16LE(spawnX, 0);
   parts.push(spawnXBuf);
