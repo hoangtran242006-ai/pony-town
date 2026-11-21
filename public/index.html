@@ -120,8 +120,29 @@ var updatingIndexCache = !1;
 function isApp() { return !1; }
 
 // ==========================================
-// Open Access: Auto-login with random guest name
+// Open Access: Auto-login with random guest name & Name Persistence
 // ==========================================
+// Intercept character save requests to persist updated character name permanently
+(function() {
+  const _origFetch = window.fetch;
+  window.fetch = function(url, init) {
+    if (typeof url === 'string' && (url.includes('/api/pony/save') || url.includes('/api/account/character'))) {
+      try {
+        if (init && init.body) {
+          if (typeof init.body === 'string') {
+            const parsed = JSON.parse(init.body);
+            if (parsed && parsed.name) {
+              console.log('[STORAGE] Persisting renamed character:', parsed.name);
+              localStorage.setItem('pt_player_name', parsed.name);
+            }
+          }
+        }
+      } catch (e) {}
+    }
+    return _origFetch.apply(this, arguments);
+  };
+})();
+
 (async function initAuth() {
   const params = new URLSearchParams(window.location.search);
   const u = params.get('u');
@@ -129,6 +150,7 @@ function isApp() { return !1; }
   const s = params.get('s');
   const devAuth = params.get('dev_auth');
   let savedToken = localStorage.getItem('pt_session_token');
+  let savedName = localStorage.getItem('pt_player_name');
 
   function launchClient() {
     var p = document.createElement("script");
@@ -152,16 +174,18 @@ function isApp() { return !1; }
 
   if (devAuth) {
     // Developer auth via secret URL param
-    authPayload = { dev_auth: devAuth, u: u || 'Akira' };
+    authPayload = { dev_auth: devAuth, u: u || savedName || 'Akira' };
   } else if (u && t && s) {
     // Magic link with signature
     authPayload = { u, t, s };
+    localStorage.setItem('pt_player_name', u);
   } else if (savedToken) {
-    // Restore previous session
-    authPayload = { session_token: savedToken };
+    // Restore previous session with persisted character name
+    authPayload = { session_token: savedToken, name: savedName };
   } else {
-    // Public open access: auto-register with random guest name or provided name
-    const guestName = u || randomGuestName();
+    // Public open access: use persisted name or auto-register with random guest name
+    const guestName = u || savedName || randomGuestName();
+    localStorage.setItem('pt_player_name', guestName);
     const nowSec = Math.floor(Date.now() / 1000);
     // Generate signature using Web Crypto (matches server calculateSignature)
     try {
@@ -173,7 +197,7 @@ function isApp() { return !1; }
       authPayload = { u: guestName, t: String(nowSec), s: sig };
     } catch (e) {
       // Fallback: use localhost-style direct dev auth
-      authPayload = { dev_auth: 'pt_dev_master_akira_8832', u: randomGuestName() };
+      authPayload = { dev_auth: 'pt_dev_master_akira_8832', u: guestName };
     }
   }
 
@@ -197,6 +221,7 @@ function isApp() { return !1; }
       // Auth failed for some other reason (e.g. reserved name conflict), retry with new name
       localStorage.removeItem('pt_session_token');
       const retryName = randomGuestName();
+      localStorage.setItem('pt_player_name', retryName);
       const nowSec2 = Math.floor(Date.now() / 1000);
       const msgBuf = new TextEncoder().encode(`${retryName}|${nowSec2}|pt_magic_secret_2026_9f82d1c6`);
       const hashBuf = await crypto.subtle.digest('SHA-256', msgBuf);
@@ -209,6 +234,7 @@ function isApp() { return !1; }
       const data2 = await resp2.json();
       if (data2.success && data2.session_token) {
         localStorage.setItem('pt_session_token', data2.session_token);
+        if (data2.name) localStorage.setItem('pt_player_name', data2.name);
         document.cookie = `pt_session=${data2.session_token}; path=/; max-age=604800; SameSite=Lax`;
       }
       launchClient();
@@ -219,6 +245,9 @@ function isApp() { return !1; }
     if (data.session_token) {
       localStorage.setItem('pt_session_token', data.session_token);
       document.cookie = `pt_session=${data.session_token}; path=/; max-age=604800; SameSite=Lax`;
+    }
+    if (data.name) {
+      localStorage.setItem('pt_player_name', data.name);
     }
 
     // Clean URL query parameters smoothly without reloading

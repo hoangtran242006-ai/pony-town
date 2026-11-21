@@ -334,8 +334,8 @@ function createChatPacket(entityId, name, text, chatType = 0, updateId = 13, isD
 // Standard Authentic Pony Look Palettes for different players
 const PONY_LOOK_PRESETS = [
   {
-    name: 'Ruby Spark',
-    look: 'aAB/9EXB0wwgAA' // Red default pony
+    name: 'Pony',
+    look: 'aAB/9EXB0wwgAA' // Authentic Red default pony (as requested)
   },
   {
     name: 'Sunny Gold',
@@ -363,7 +363,7 @@ const PONY_LOOK_PRESETS = [
   }
 ];
 
-function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3120, spawnY = 2350, isDev = false) {
+function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3250, spawnY = 2260, isDev = false) {
   const parts = [];
 
   // ==========================================

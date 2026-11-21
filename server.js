@@ -249,7 +249,7 @@ app.post('/api/auth/verify', (req, res) => {
 
 // Restore session from localStorage token
 app.post('/api/auth/session', (req, res) => {
-  const { session_token } = req.body;
+  const { session_token, name } = req.body;
   if (!session_token) {
     return res.status(400).json({ success: false, error: 'Thiếu session_token' });
   }
@@ -258,6 +258,13 @@ app.post('/api/auth/session', (req, res) => {
   const session = sessions[session_token];
   if (!session) {
     return res.status(401).json({ success: false, error: 'Phiên đăng nhập đã hết hạn hoặc không tồn tại' });
+  }
+
+  // If client provided an updated character name, update session
+  if (name && name.trim() && !RESERVED_NAMES.includes(name.trim().toLowerCase())) {
+    session.name = name.trim();
+    sessions[session_token] = session;
+    saveSessions(sessions);
   }
 
   res.json({
@@ -298,8 +305,8 @@ app.get('/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public/log
 let nextEntityId = 10;
 const activeSessions = new Map(); // ws -> session
 
-// Scenic spawn meadow center (open, spacious, bug-free)
-const SPAWN_CENTER = { x: 3120, y: 2350 };
+// Scenic spawn meadow center (Market Square Town Plaza with trees, buildings, houses)
+const SPAWN_CENTER = { x: 3250, y: 2260 };
 
 // ==========================================
 // REST & Binary APIs (Pony Town compatibility)
@@ -411,6 +418,18 @@ app.post(['/api/pony/save', '/api/account/character'], (req, res) => {
       characters.unshift(newChar);
     }
     writeJson(CHARACTERS_FILE, characters);
+
+    // Sync updated character name to player's active session
+    const session = getSessionFromReq(req);
+    if (session && newChar.name) {
+      session.name = newChar.name;
+      const sessions = getSessions();
+      if (sessions[session.token]) {
+        sessions[session.token].name = newChar.name;
+        sessions[session.token].characterId = newChar.id;
+        saveSessions(sessions);
+      }
+    }
   }
 
   const activeChar = characters[0] || newChar || null;
@@ -474,18 +493,25 @@ wss.on('connection', (ws, req) => {
 
   // Pick unique authentic pony look & name preset
   const preset = worldPacket.PONY_LOOK_PRESETS[sessionIndex % worldPacket.PONY_LOOK_PRESETS.length];
-  const charLookBuf = Buffer.from(preset.look, 'base64');
+  const characters = readJson(CHARACTERS_FILE, []);
+  const activeChar = characters[0] || null;
+
+  let charLookBuf = Buffer.from(preset.look, 'base64');
+  if (sessionIndex === 0 && activeChar) {
+    charLookBuf = (activeChar.lookBuf && Buffer.isBuffer(activeChar.lookBuf)) ? activeChar.lookBuf :
+      (activeChar.look ? Buffer.from(activeChar.look, 'base64') : Buffer.from(preset.look, 'base64'));
+  }
   
-  let charName = authSession ? authSession.name : (sessionIndex === 0 ? 'Pony' : `${preset.name}`);
+  let charName = (authSession && authSession.name) || ((sessionIndex === 0 && activeChar && activeChar.name) ? activeChar.name : `${preset.name}`);
   if (isDev) {
     charName = charName.startsWith('[DEV]') ? charName : `[DEV] ${charName}`;
   } else {
     charName = charName.replace(/^\[DEV\]\s*/i, '');
   }
 
-  // Slight jitter around scenic meadow spawn
-  const spawnX = SPAWN_CENTER.x + (sessionIndex % 4) * 24 - 36;
-  const spawnY = SPAWN_CENTER.y + Math.floor(sessionIndex / 4) * 24 - 24;
+  // Slight jitter around Market Square spawn
+  const spawnX = SPAWN_CENTER.x + (sessionIndex % 4) * 20 - 30;
+  const spawnY = SPAWN_CENTER.y + Math.floor(sessionIndex / 4) * 20 - 20;
 
   const session = {
     ws,
@@ -522,7 +548,7 @@ wss.on('connection', (ws, req) => {
   }
 
   // 2. Synchronize existing players to this new client (Opcode 88)
-  // Give new client 200ms to complete local map parsing before spawning existing entities
+  // Give new client 1200ms to complete local map parsing before spawning existing entities
   setTimeout(() => {
     if (ws.readyState === WebSocket.OPEN) {
       for (const [otherWs, otherSession] of activeSessions.entries()) {
@@ -534,7 +560,7 @@ wss.on('connection', (ws, req) => {
             otherSession.x,
             otherSession.y,
             otherSession.z,
-            0,
+            otherSession.state || 0,
             nextUpdateId(),
             otherSession.isDev
           );
@@ -543,7 +569,7 @@ wss.on('connection', (ws, req) => {
         }
       }
     }
-  }, 200);
+  }, 1200);
 
   // 3. Broadcast new player spawn (Opcode 88) to all existing clients
   const spawnNewPkt = worldPacket.createPonySpawnPacket(
