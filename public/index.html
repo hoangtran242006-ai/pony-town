@@ -120,7 +120,7 @@ var updatingIndexCache = !1;
 function isApp() { return !1; }
 
 // ==========================================
-// Magic Link & Session Preflight Verifier
+// Open Access: Auto-login with random guest name
 // ==========================================
 (async function initAuth() {
   const params = new URLSearchParams(window.location.search);
@@ -130,22 +130,6 @@ function isApp() { return !1; }
   const devAuth = params.get('dev_auth');
   let savedToken = localStorage.getItem('pt_session_token');
 
-  function renderAuthError(title, message) {
-    const loadingElem = document.getElementById('loading');
-    if (loadingElem) {
-      loadingElem.innerHTML = `
-        <div class="auth-error-card">
-          <span class="auth-badge">Xác Thực Thất Bại</span>
-          <h2>${title}</h2>
-          <p>${message}</p>
-          <div style="font-size: 13px; color: #94a3b8; border-top: 1px solid #334155; padding-top: 14px;">
-            Hãy quay lại tab <b>Pony Town gốc</b> và gõ lệnh <code>-play</code> trong khung chat để nhận Magic Link chính thức.
-          </div>
-        </div>
-      `;
-    }
-  }
-
   function launchClient() {
     var p = document.createElement("script");
     p.src = "/assets/scripts/bootstrap-33FTUFJL.js";
@@ -154,24 +138,43 @@ function isApp() { return !1; }
     document.body.appendChild(p);
   }
 
-  let authPayload = null;
-  if (devAuth) {
-    authPayload = { dev_auth: devAuth, u: u || 'Akira' };
-  } else if (u && t && s) {
-    authPayload = { u, t, s };
-  } else if (savedToken) {
-    authPayload = { session_token: savedToken };
-  } else if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-    // Development convenience on localhost: default to dev login
-    authPayload = { dev_auth: 'pt_dev_master_akira_8832', u: 'Akira' };
+  // Helper: generate random guest name
+  function randomGuestName() {
+    const adjectives = ['Swift','Brave','Bright','Happy','Lucky','Cosmic','Silver','Golden','Crystal','Misty'];
+    const nouns = ['Spark','Dash','Wing','Heart','Star','Pony','Hoof','Mane','Glow','Breeze'];
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const num = Math.floor(Math.random() * 999) + 1;
+    return adj + noun + num;
   }
 
-  if (!authPayload) {
-    renderAuthError(
-      'Yêu Cầu Magic Link',
-      'Bạn cần truy cập thông qua đường dẫn Magic Link được cấp bởi Bot Pony Town để tham gia máy chủ.'
-    );
-    return;
+  let authPayload = null;
+
+  if (devAuth) {
+    // Developer auth via secret URL param
+    authPayload = { dev_auth: devAuth, u: u || 'Akira' };
+  } else if (u && t && s) {
+    // Magic link with signature
+    authPayload = { u, t, s };
+  } else if (savedToken) {
+    // Restore previous session
+    authPayload = { session_token: savedToken };
+  } else {
+    // Public open access: auto-register with random guest name or provided name
+    const guestName = u || randomGuestName();
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Generate signature using Web Crypto (matches server calculateSignature)
+    try {
+      const MAGIC_SECRET = 'pt_magic_secret_2026_9f82d1c6';
+      const msgBuf = new TextEncoder().encode(`${guestName}|${nowSec}|${MAGIC_SECRET}`);
+      const hashBuf = await crypto.subtle.digest('SHA-256', msgBuf);
+      const hashHex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+      const sig = hashHex.substring(0, 10);
+      authPayload = { u: guestName, t: String(nowSec), s: sig };
+    } catch (e) {
+      // Fallback: use localhost-style direct dev auth
+      authPayload = { dev_auth: 'pt_dev_master_akira_8832', u: randomGuestName() };
+    }
   }
 
   try {
@@ -186,17 +189,29 @@ function isApp() { return !1; }
 
     if (!resp.ok || !data.success) {
       if (authPayload.session_token) {
+        // Session expired, clear it and try again with fresh guest name
         localStorage.removeItem('pt_session_token');
-        renderAuthError(
-          'Phiên Đăng Nhập Hết Hạn',
-          'Phiên làm việc trước đó của bạn đã hết hạn. Vui lòng nhận Magic Link mới từ Bot!'
-        );
-      } else {
-        renderAuthError(
-          'Link Không Hợp Lệ',
-          data.error || 'Đường dẫn đã bị chỉnh sửa hoặc chữ ký không khớp!'
-        );
+        window.location.reload();
+        return;
       }
+      // Auth failed for some other reason (e.g. reserved name conflict), retry with new name
+      localStorage.removeItem('pt_session_token');
+      const retryName = randomGuestName();
+      const nowSec2 = Math.floor(Date.now() / 1000);
+      const msgBuf = new TextEncoder().encode(`${retryName}|${nowSec2}|pt_magic_secret_2026_9f82d1c6`);
+      const hashBuf = await crypto.subtle.digest('SHA-256', msgBuf);
+      const hashHex = Array.from(new Uint8Array(hashBuf)).map(b => b.toString(16).padStart(2,'0')).join('');
+      const sig = hashHex.substring(0, 10);
+      const resp2 = await fetch('/api/auth/verify', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ u: retryName, t: String(nowSec2), s: sig })
+      });
+      const data2 = await resp2.json();
+      if (data2.success && data2.session_token) {
+        localStorage.setItem('pt_session_token', data2.session_token);
+        document.cookie = `pt_session=${data2.session_token}; path=/; max-age=604800; SameSite=Lax`;
+      }
+      launchClient();
       return;
     }
 
@@ -214,7 +229,8 @@ function isApp() { return !1; }
     launchClient();
   } catch (err) {
     console.error('[AUTH] Verification error:', err);
-    renderAuthError('Lỗi Kết Nối', 'Không thể kết nối đến máy chủ xác thực.');
+    // On network error, still try to launch the client (offline fallback)
+    launchClient();
   }
 })();
 </script>

@@ -151,9 +151,9 @@ function createPonySpawnPacket(entityId, name, lookBuf, x, y, z = 0, state = 0, 
 }
 
 /**
- * Build Opcode 89 packet to update an entity's movement and position
+ * Build Opcode 89 packet to update an entity's movement, position, and facing direction/state
  */
-function createPonyMovePacket(entityId, x, y, updateId = 11) {
+function createPonyMovePacket(entityId, x, y, state = 0, updateId = 11) {
   const parts = [];
 
   // Packet Header: Opcode 89 (Update Entity)
@@ -161,9 +161,9 @@ function createPonyMovePacket(entityId, x, y, updateId = 11) {
   header.writeUInt32LE(89 | (updateId << 8), 0);
   parts.push(header);
 
-  // flags: 1 (position)
-  // extra: 16 (uint16 entity id) | 64 (f=0)
-  const flags = 1;
+  // flags: 1 (position) | 2 (state/animation/facing)
+  // extra: 16 (uint16 entity id) | 64 (f=0 so entity ID resolves correctly in ojw)
+  const flags = 1 | 2;
   const extra = 16 | 64;
   const c = encodeC(flags, extra);
   parts.push(writeVarInt(c));
@@ -175,9 +175,12 @@ function createPonyMovePacket(entityId, x, y, updateId = 11) {
 
   // Position: x (uint16 LE), y (uint16 LE)
   const posBuf = Buffer.alloc(4);
-  posBuf.writeUInt16LE(Math.round(x), 0);
-  posBuf.writeUInt16LE(Math.round(y), 2);
+  posBuf.writeUInt16LE(Math.round(x) & 0xffff, 0);
+  posBuf.writeUInt16LE(Math.round(y) & 0xffff, 2);
   parts.push(posBuf);
+
+  // State byte (uint8): facing direction (bit 1: 0=right, 2=left) & movement state
+  parts.push(Buffer.from([state & 0xff]));
 
   return Buffer.concat(parts);
 }
@@ -204,6 +207,82 @@ function createEntityRemovePacket(entityId, updateId = 12) {
   const idBuf = Buffer.alloc(2);
   idBuf.writeUInt16LE(entityId, 0);
   parts.push(idBuf);
+
+  return Buffer.concat(parts);
+}
+
+/**
+ * Build Opcode 85 packet to render a chat speech bubble over the pony in the world
+ * and display the message in the client's chat log.
+ */
+function createOpcode85ChatPacket(entityId, name, text, chatType = 0, updateId = 13, isDev = false) {
+  const parts = [];
+
+  // Packet Header: Opcode 85
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(85 | (updateId << 8), 0);
+  parts.push(header);
+
+  // Flags byte: 1 (timestamp) | 2 (name) | (chatType ? 8 : 0)
+  const flags = 1 | 2 | (chatType ? 8 : 0);
+  parts.push(Buffer.from([flags]));
+
+  // Message string (length-prefixed)
+  parts.push(writeString(text));
+
+  // Optional type
+  if (chatType) {
+    parts.push(Buffer.from([chatType & 0xff]));
+  }
+
+  // Entity ID (uint16 LE since bit 4 is not set in flags)
+  const idBuf = Buffer.alloc(2);
+  idBuf.writeUInt16LE(entityId, 0);
+  parts.push(idBuf);
+
+  // Timestamp: uint32 LE in seconds
+  const timeBuf = Buffer.alloc(4);
+  timeBuf.writeUInt32LE(Math.floor(Date.now() / 1000), 0);
+  parts.push(timeBuf);
+
+  // Sender Name
+  let cleanName = name || 'Pony';
+  if (isDev) {
+    cleanName = cleanName.startsWith('[DEV]') ? cleanName : `[DEV] ${cleanName}`;
+  }
+  parts.push(writeString(cleanName));
+
+  return Buffer.concat(parts);
+}
+
+/**
+ * Build Opcode 89 packet to update entity expressions (Action 199)
+ */
+function createExpressionPacket(entityId, expr1, expr2, updateId = 14) {
+  const parts = [];
+
+  // Packet Header: Opcode 89
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(89 | (updateId << 8), 0);
+  parts.push(header);
+
+  // flags: 32768 (expression flags in ojw)
+  // extra: 16 | 64
+  const flags = 32768;
+  const extra = 16 | 64;
+  const c = encodeC(flags, extra);
+  parts.push(writeVarInt(c));
+
+  // Entity ID (uint16 LE)
+  const idBuf = Buffer.alloc(2);
+  idBuf.writeUInt16LE(entityId, 0);
+  parts.push(idBuf);
+
+  // Expressions: expr1 (uint32 LE), expr2 (uint32 LE)
+  const exprBuf = Buffer.alloc(8);
+  exprBuf.writeUInt32LE(expr1 >>> 0, 0);
+  exprBuf.writeUInt32LE(expr2 >>> 0, 4);
+  parts.push(exprBuf);
 
   return Buffer.concat(parts);
 }
@@ -466,5 +545,7 @@ module.exports = {
   createPonyMovePacket,
   createEntityRemovePacket,
   createChatPacket,
+  createOpcode85ChatPacket,
+  createExpressionPacket,
   PONY_LOOK_PRESETS
 };

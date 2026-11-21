@@ -495,6 +495,7 @@ wss.on('connection', (ws, req) => {
     x: spawnX,
     y: spawnY,
     z: 0,
+    state: 0,
     isDev: isDev
   };
 
@@ -585,11 +586,30 @@ wss.on('connection', (ws, req) => {
         const x = (origX_Y & 0xffff);
         const y = (origX_Y >>> 16);
 
+        // Decode direction and animation state
+        const decodedR = (r ^ 0x816c41fa) >>> 0;
+        const dir = decodedR & 0xf;
+        const animState = (decodedR >>> 4) & 0xff;
+
+        // Facing direction: bit 1 is set for facing left (dir & 1 or x < session.x)
+        let state = session.state || 0;
+        if (x < session.x || (dir & 1)) {
+          state |= 2;
+        } else if (x > session.x || (dir & 2)) {
+          state &= ~2;
+        }
+        // Walking flag: bit 0
+        if (x !== session.x || y !== session.y || animState > 0) {
+          state |= 1;
+        } else {
+          state &= ~1;
+        }
         session.x = x;
         session.y = y;
+        session.state = state;
 
         // Broadcast movement to all other clients via Opcode 89
-        const movePkt = worldPacket.createPonyMovePacket(session.entityId, x, y, nextUpdateId());
+        const movePkt = worldPacket.createPonyMovePacket(session.entityId, x, y, state, nextUpdateId());
         for (const [otherWs] of activeSessions.entries()) {
           if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
             otherWs.send(movePkt);
@@ -604,17 +624,24 @@ wss.on('connection', (ws, req) => {
         return;
       }
 
-      // Method 2: action -> e.g. chat say (194) or expressions
+      // Method 2: action -> e.g. chat say (194) or expressions (199)
       if (buf.length >= 2 && buf[0] === 2) {
         const actionType = buf[1];
         // Action 194: Say message
+        // Format: [2, 194, chatType(u8), messageId(varint), targetEntityId(u16 LE), strLen+1(varint), text(utf8), options(u8)]
         if (actionType === 194) {
           try {
             let offset = 2;
             const chatType = buf.readUInt8(offset); offset += 1;
+            
+            // messageId varint
             while (offset < buf.length && (buf[offset] & 0x80)) offset++;
-            offset++;
+            offset++; // last byte of messageId
+            
+            // targetEntityId (u16 LE)
             offset += 2;
+            
+            // text string (varint length + utf8)
             let strLen = 0, shift = 0;
             while (offset < buf.length) {
               const b = buf[offset++];
@@ -622,15 +649,24 @@ wss.on('connection', (ws, req) => {
               if (!(b & 0x80)) break;
               shift += 7;
             }
-            strLen -= 1;
+            strLen -= 1; // actual string length
+            
             if (strLen > 0 && offset + strLen <= buf.length) {
               const text = buf.toString('utf8', offset, offset + strLen);
               console.log(`[CHAT] ${session.name} (${session.entityId}): "${text}"`);
 
-              // Broadcast chat via Opcode 87 to all connected clients (including sender)
-              const chatPkt = worldPacket.createChatPacket(session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev);
+              // 1. In-world Speech Bubble (Opcode 85)
+              const bubblePkt = worldPacket.createOpcode85ChatPacket(
+                session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev
+              );
+              // 2. Chat Log notification (Opcode 87)
+              const chatPkt = worldPacket.createChatPacket(
+                session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev
+              );
+
               for (const [clientWs] of activeSessions.entries()) {
                 if (clientWs.readyState === WebSocket.OPEN) {
+                  clientWs.send(bubblePkt);
                   clientWs.send(chatPkt);
                 }
               }
@@ -638,8 +674,28 @@ wss.on('connection', (ws, req) => {
           } catch (e) {
             console.error('[WS] Error parsing chat action:', e.message);
           }
+          return;
         }
-        return;
+
+        // Action 199: Expressions / Emotes
+        // Format: [2, 199, expr1(u32 LE), expr2(u32 LE), options(u8)]
+        if (actionType === 199 && buf.length >= 10) {
+          try {
+            const expr1 = buf.readUInt32LE(2);
+            const expr2 = buf.readUInt32LE(6);
+            console.log(`[EXPR] ${session.name} (${session.entityId}): expr1=${expr1}, expr2=${expr2}`);
+
+            const exprPkt = worldPacket.createExpressionPacket(session.entityId, expr1, expr2, nextUpdateId());
+            for (const [otherWs] of activeSessions.entries()) {
+              if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+                otherWs.send(exprPkt);
+              }
+            }
+          } catch (e) {
+            console.error('[WS] Error parsing expression action:', e.message);
+          }
+          return;
+        }
       }
     }
   });
