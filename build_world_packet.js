@@ -337,7 +337,7 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   parts.push(writeLen(lookBuf.length));
   parts.push(lookBuf);         // S: look data
   parts.push(writeObjectId('111122223333444455556666')); // Nd: ObjectId
-  parts.push(Buffer.from([isDev ? 1 : 0])); // wf: HU(i) -> developer tag active if isDev
+  parts.push(Buffer.from([0])); // wf: HU(i) -> false (selectedPlushId: 0 = none; non-zero requires 12-byte ObjectId)
   parts.push(Buffer.from([0])); // dq: HJ(i) -> false
   parts.push(Buffer.from([0])); // lc: HT(i) -> 0
   parts.push(Buffer.from([0])); // fq: HJ(i) -> false
@@ -345,8 +345,8 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   // 6. jq: HJ(i) -> boolean
   parts.push(Buffer.from([0]));
 
-  // 7. sa: HT(i) -> tier 4 for dev, 0 for player
-  parts.push(Buffer.from([isDev ? 4 : 0]));
+  // 7. sa: HT(i) -> 0 (supporter tier)
+  parts.push(Buffer.from([0]));
 
   // 8. kq: H6(i) -> account settings (empty object: 0 keys)
   parts.push(writeLen(0));
