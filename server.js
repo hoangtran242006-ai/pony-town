@@ -80,6 +80,7 @@ app.use('/assets/locales', express.static(path.join(__dirname, 'public/assets/lo
 app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/archive', express.static(path.join(__dirname, 'archive')));
+app.use(['/%F0%9F%8E%AE%20Pony%20Town_files', '/🎮 Pony Town_files'], express.static(path.join(__dirname, 'archive/🎮 Pony Town_files')));
 
 // Direct Icon and Logo routes
 app.get('/favicon.ico', (req, res) => res.sendFile(path.join(__dirname, 'public/favicon.ico')));
@@ -139,7 +140,7 @@ app.get(['/api/status', '/api2/game/status'], (req, res) => {
 app.get(['/api/servers', '/api/refetch-servers'], (req, res) => {
   const count = (wss && wss.clients) ? wss.clients.size : 1;
   res.json([
-    { id: 'safe-vi', name: 'Safe Vietnamese', host: 'localhost', port: PORT, count, flags: 'safe,pg' }
+    { id: 'safe-vi', name: 'Safe Vietnamese', host: '', count, flags: 'safe,pg' }
   ]);
 });
 
