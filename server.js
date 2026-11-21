@@ -676,11 +676,12 @@ wss.on('connection', (ws, req) => {
             vy = (vec.y * speed) | 0;
           }
 
-          // Facing direction: bit 1 (value 2): 0=facing right, 2=facing left
+          // Facing direction: bit 1 (value 2): in Pony Town engine, 2 = facing right (default), 0 = facing left
+          // (Client logic: b = oiB(vx) which is true for vx > 0 (right) -> state |= 2; false for vx < 0 (left) -> state &= ~2)
           let state = session.state || 0;
-          if (vx < 0 || x < session.x || (dir >= 9 && dir <= 15)) {
+          if (vx > 0 || x > session.x || (dir >= 1 && dir <= 7)) {
             state |= 2;
-          } else if (vx > 0 || x > session.x || (dir >= 1 && dir <= 7)) {
+          } else if (vx < 0 || x < session.x || (dir >= 9 && dir <= 15)) {
             state &= ~2;
           }
 
