@@ -221,9 +221,9 @@ app.post(['/api/pony/save', '/api/account/character'], (req, res) => {
   if (isBinaryReq || accepts.includes('application/octet-stream')) {
     res.setHeader('Content-Type', 'application/octet-stream');
     const id = (activeChar && activeChar.id) || '111122223333444455556666';
-    const name = (activeChar && activeChar.name) || 'Scaramouche';
-    const tag = (activeChar && activeChar.tag) || 'Scara';
-    const lookBuf = (activeChar && activeChar.lookBuf) || (activeChar && activeChar.look && Buffer.from(activeChar.look, 'base64')) || null;
+    const name = (activeChar && activeChar.name) || 'Pony';
+    const tag = (activeChar && activeChar.tag) !== undefined ? activeChar.tag : '';
+    const lookBuf = (activeChar && activeChar.lookBuf) || (activeChar && activeChar.look && Buffer.from(activeChar.look, 'base64')) || Buffer.from('aAB/9EXB0wwgAA', 'base64');
     return res.send(binaryProtocol.writePonyCharacter(id, name, tag, lookBuf));
   }
 

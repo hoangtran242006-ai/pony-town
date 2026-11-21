@@ -110,10 +110,10 @@ function buildWorldInitPacket(activeChar = null) {
   entityIdBuf.writeUInt16LE(1, 0);
   parts.push(entityIdBuf);     // K: entity ID = 1
   
-  const charName = (activeChar && activeChar.name) || 'Scaramouche';
+  const charName = (activeChar && activeChar.name) || 'Pony';
   parts.push(writeString(charName)); // B: character name
   
-  const fallbackLook = Buffer.from('aDJIkRmFak3sSWdqyCZnReTohqVF5eX5thDpKAc41TARGZ/kUzusvD/kIk4n5SK////qx7wmo7aGpBw4LCAhhsAAIoAFeD0Fd///NN3Bv3XFbrlW6oA', 'base64');
+  const fallbackLook = Buffer.from('aAB/9EXB0wwgAA', 'base64');
   const lookBuf = (activeChar && activeChar.lookBuf) || 
     (activeChar && activeChar.look && Buffer.from(activeChar.look, 'base64')) || 
     fallbackLook;

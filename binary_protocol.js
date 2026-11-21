@@ -56,9 +56,9 @@ function writeObjectId(hexStr = '654321654321654321654321') {
   return buf;
 }
 
-const DEFAULT_LOOK = Buffer.from('aDJIkRmFak3sSWdqyCZnReTohqVF5eX5thDpKAc41TARGZ/kUzusvD/kIk4n5SK////qx7wmo7aGpBw4LCAhhsAAIoAFeD0Fd///NN3Bv3XFbrlW6oA', 'base64');
+const DEFAULT_LOOK = Buffer.from('aAB/9EXB0wwgAA', 'base64');
 
-function writePonyCharacter(idHex = '111122223333444455556666', name = 'Scaramouche', tag = 'Scara', lookBuf = null) {
+function writePonyCharacter(idHex = '111122223333444455556666', name = 'Pony', tag = '', lookBuf = null) {
   const parts = [];
   // flags: 16 provides tag Pa
   const flags = tag ? 16 : 0;
@@ -148,9 +148,9 @@ function writeAccountResponse(accountName = 'Hoàng<3', character = null, online
 
   // af: active pony character
   const charId = (character && character.id) || '111122223333444455556666';
-  const charName = (character && character.name) || 'Scaramouche';
-  const charTag = (character && character.tag) || 'Scara';
-  const charLook = (character && character.lookBuf) || (character && character.look && Buffer.from(character.look, 'base64')) || null;
+  const charName = (character && character.name) || 'Pony';
+  const charTag = (character && character.tag) !== undefined ? character.tag : '';
+  const charLook = (character && character.lookBuf) || (character && character.look && Buffer.from(character.look, 'base64')) || DEFAULT_LOOK;
   parts.push(writePonyCharacter(charId, charName, charTag, charLook));
 
   const f64 = Buffer.alloc(8);
@@ -166,9 +166,9 @@ function writeJoinResponse(token = 'token-live', character = null) {
   parts.push(writeString(token));
   
   const charId = (character && character.id) || '111122223333444455556666';
-  const charName = (character && character.name) || 'Scaramouche';
-  const charTag = (character && character.tag) || 'Scara';
-  const charLook = (character && character.lookBuf) || (character && character.look && Buffer.from(character.look, 'base64')) || null;
+  const charName = (character && character.name) || 'Pony';
+  const charTag = (character && character.tag) !== undefined ? character.tag : '';
+  const charLook = (character && character.lookBuf) || (character && character.look && Buffer.from(character.look, 'base64')) || DEFAULT_LOOK;
   parts.push(writePonyCharacter(charId, charName, charTag, charLook));
 
   parts.push(Buffer.from([0])); // plush: false
@@ -208,7 +208,7 @@ function parseSavePonyRequest(buf, accountId = 'aaaa1111bbbb2222cccc3333') {
     }
     
     let nameLenCode = readVarInt();
-    let name = 'Scaramouche';
+    let name = 'Pony';
     if (nameLenCode > 0) {
       let strLen = nameLenCode - 1;
       name = buf.toString('utf8', offset, offset + strLen);
@@ -229,7 +229,7 @@ function parseSavePonyRequest(buf, accountId = 'aaaa1111bbbb2222cccc3333') {
       if (hasAe !== 0) offset += 12;
     }
     
-    let tag = 'Scara';
+    let tag = '';
     if (offset < buf.length) {
       let tagLenCode = readVarInt();
       if (tagLenCode > 0) {
