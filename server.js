@@ -716,9 +716,9 @@ wss.on('connection', (ws, req) => {
                   session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev
                 );
 
-                for (const [clientWs] of activeSessions.entries()) {
-                  if (clientWs.readyState === WebSocket.OPEN) {
-                    clientWs.send(bubblePkt);
+                for (const [otherWs] of activeSessions.entries()) {
+                  if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+                    otherWs.send(bubblePkt);
                   }
                 }
               }
