@@ -186,27 +186,26 @@ function createPonyMovePacket(entityId, x, y, state = 0, updateId = 11) {
 }
 
 /**
- * Build Opcode 89 packet to remove an entity from the client
+ * Build Opcode 107 packet to remove an entity from all client maps
  */
 function createEntityRemovePacket(entityId, updateId = 12) {
   const parts = [];
 
-  // Packet Header: Opcode 89
+  // Packet Header: Opcode 107 (Native Remove Entity in case 107: ojB(game, entityId, 0, false, true))
   const header = Buffer.alloc(4);
-  header.writeUInt32LE(89 | (updateId << 8), 0);
+  header.writeUInt32LE(107 | (updateId << 8), 0);
   parts.push(header);
-
-  // flags: 0x2000000 (remove flag: p.A |= 4)
-  // extra: 16 (uint16 entity id) | 64 (f=0)
-  const flags = 0x2000000;
-  const extra = 16 | 64;
-  const c = encodeC(flags, extra);
-  parts.push(writeVarInt(c));
 
   // Entity ID (uint16 LE)
   const idBuf = Buffer.alloc(2);
   idBuf.writeUInt16LE(entityId, 0);
   parts.push(idBuf);
+
+  // Varint (0)
+  parts.push(writeVarInt(0));
+
+  // Bool (0 = false)
+  parts.push(Buffer.from([0]));
 
   return Buffer.concat(parts);
 }

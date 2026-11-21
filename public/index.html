@@ -39,42 +39,51 @@
 document.body.setAttribute("data-host", window.location.origin + "/");
 
 // ==========================================
-// Multiplayer Runtime Instrumentation & Debugger
+// Multiplayer WebSocket Compatibility Layer
 // ==========================================
 (function() {
-  window.__wsEvents = [];
+  window.__wsEvents = window.__wsEvents || [];
   const _NativeWS = window.WebSocket;
-  window.WebSocket = function(url, proto) {
-    const ws = new _NativeWS(url, proto);
-    console.error('[WS-DEBUG] Created socket to:', url);
-    window.__wsEvents.push({ type: 'open', url, time: Date.now() });
+  if (!_NativeWS) return;
 
-    ws.addEventListener('message', async (e) => {
-      let b = e.data instanceof Blob ? await e.data.arrayBuffer() : e.data;
-      if (b instanceof ArrayBuffer) {
-        const dv = new DataView(b);
-        const opcode = dv.byteLength >= 4 ? (dv.getUint32(0, true) & 0xff) : (dv.byteLength >= 1 ? dv.getUint8(0) : -1);
-        const updateId = dv.byteLength >= 4 ? (dv.getUint32(0, true) >>> 8) : 0;
-        console.error('[WS-RECV]', 'opcode:' + opcode, 'updateId:' + updateId, 'bytes:' + b.byteLength);
-        window.__wsEvents.push({ type: 'recv', opcode, updateId, bytes: b.byteLength, time: Date.now() });
-        if (window.__wsEvents.length > 30) window.__wsEvents.shift();
-        document.body.setAttribute('data-ws-events', JSON.stringify(window.__wsEvents));
-      }
-    });
+  class SubclassedWebSocket extends _NativeWS {
+    constructor(url, protocols) {
+      super(url, protocols);
+      console.log('[WS] Connected to:', url);
+      window.__wsEvents.push({ type: 'open', url: String(url), time: Date.now() });
 
-    const origSend = ws.send;
-    ws.send = function(data) {
+      this.addEventListener('message', async (e) => {
+        let b = e.data instanceof Blob ? await e.data.arrayBuffer() : e.data;
+        if (b instanceof ArrayBuffer) {
+          const dv = new DataView(b);
+          const opcode = dv.byteLength >= 4 ? (dv.getUint32(0, true) & 0xff) : (dv.byteLength >= 1 ? dv.getUint8(0) : -1);
+          const updateId = dv.byteLength >= 4 ? (dv.getUint32(0, true) >>> 8) : 0;
+          window.__wsEvents.push({ type: 'recv', opcode, updateId, bytes: b.byteLength, time: Date.now() });
+          if (window.__wsEvents.length > 30) window.__wsEvents.shift();
+          document.body.setAttribute('data-ws-events', JSON.stringify(window.__wsEvents));
+        }
+      });
+    }
+
+    send(data) {
       if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
         const len = data.byteLength || data.length || 0;
         window.__wsEvents.push({ type: 'send', bytes: len, time: Date.now() });
         if (window.__wsEvents.length > 30) window.__wsEvents.shift();
         document.body.setAttribute('data-ws-events', JSON.stringify(window.__wsEvents));
       }
-      return origSend.apply(this, arguments);
-    };
+      return super.send(data);
+    }
+  }
 
-    return ws;
-  };
+  // Preserve all standard WebSocket static properties (OPEN=1, CONNECTING=0, CLOSING=2, CLOSED=3)
+  SubclassedWebSocket.CONNECTING = _NativeWS.CONNECTING;
+  SubclassedWebSocket.OPEN = _NativeWS.OPEN;
+  SubclassedWebSocket.CLOSING = _NativeWS.CLOSING;
+  SubclassedWebSocket.CLOSED = _NativeWS.CLOSED;
+  Object.setPrototypeOf(SubclassedWebSocket, _NativeWS);
+
+  window.WebSocket = SubclassedWebSocket;
 
   setInterval(() => {
     try {

@@ -305,6 +305,23 @@ app.get('/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public/log
 let nextEntityId = 10;
 const activeSessions = new Map(); // ws -> session
 
+function allocateEntityId() {
+  let attempts = 0;
+  while (attempts++ < 1000) {
+    nextEntityId = (nextEntityId % 60000) + 1;
+    if (nextEntityId < 10) nextEntityId = 10;
+    let inUse = false;
+    for (const session of activeSessions.values()) {
+      if (session.entityId === nextEntityId) {
+        inUse = true;
+        break;
+      }
+    }
+    if (!inUse) return nextEntityId;
+  }
+  return ++nextEntityId;
+}
+
 // Scenic spawn meadow center (Market Square Town Plaza with trees, buildings, houses)
 const SPAWN_CENTER = { x: 3250, y: 2260 };
 
@@ -484,12 +501,23 @@ function nextUpdateId() {
 }
 
 wss.on('connection', (ws, req) => {
-  const assignedEntityId = ++nextEntityId;
-  const sessionIndex = activeSessions.size;
-
   // Retrieve player session
   let authSession = getSessionFromReq(req);
   const isDev = authSession ? !!authSession.isDev : false;
+
+  // Stale connection cleanup (prevent duplicate sessions / ghost entities on reconnect)
+  if (authSession && authSession.token) {
+    for (const [existingWs, existingSession] of activeSessions.entries()) {
+      if (existingSession.token === authSession.token && existingWs !== ws) {
+        console.log(`[WS] Closing stale connection for session token ${authSession.token}`);
+        try { existingWs.close(); } catch (e) {}
+        activeSessions.delete(existingWs);
+      }
+    }
+  }
+
+  const assignedEntityId = allocateEntityId();
+  const sessionIndex = activeSessions.size;
 
   // Pick unique authentic pony look & name preset
   const preset = worldPacket.PONY_LOOK_PRESETS[sessionIndex % worldPacket.PONY_LOOK_PRESETS.length];
@@ -515,6 +543,7 @@ wss.on('connection', (ws, req) => {
 
   const session = {
     ws,
+    token: authSession ? authSession.token : null,
     entityId: assignedEntityId,
     name: charName,
     lookBuf: charLookBuf,
@@ -592,137 +621,136 @@ wss.on('connection', (ws, req) => {
 
   // Message handler
   ws.on('message', (raw, isBinary) => {
-    if (isBinary || Buffer.isBuffer(raw)) {
-      const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+    try {
+      if (isBinary || Buffer.isBuffer(raw)) {
+        const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
 
-      // Ping
-      if (buf.length === 0) {
-        ws.send(Buffer.alloc(0));
-        return;
-      }
-
-      // Method 0: move(t) -> 13 bytes total: [0, o_u32, r_u32, a_u32]
-      if (buf.length >= 13 && buf[0] === 0) {
-        const o = buf.readUInt32LE(1);
-        const r = buf.readUInt32LE(5);
-        const a = buf.readUInt32LE(9);
-
-        // Decode position
-        const origX_Y = (o ^ 0xb8f2782c) >>> 0;
-        const x = (origX_Y & 0xffff);
-        const y = (origX_Y >>> 16);
-
-        // Decode direction and animation state
-        const decodedR = (r ^ 0x816c41fa) >>> 0;
-        const dir = decodedR & 0xf;
-        const animState = (decodedR >>> 4) & 0xff;
-
-        // Facing direction: bit 1 is set for facing left (dir & 1 or x < session.x)
-        let state = session.state || 0;
-        if (x < session.x || (dir & 1)) {
-          state |= 2;
-        } else if (x > session.x || (dir & 2)) {
-          state &= ~2;
+        // Ping
+        if (buf.length === 0) {
+          ws.send(Buffer.alloc(0));
+          return;
         }
-        // Walking flag: bit 0
-        if (x !== session.x || y !== session.y || animState > 0) {
-          state |= 1;
-        } else {
-          state &= ~1;
-        }
-        session.x = x;
-        session.y = y;
-        session.state = state;
 
-        // Broadcast movement to all other clients via Opcode 89
-        const movePkt = worldPacket.createPonyMovePacket(session.entityId, x, y, state, nextUpdateId());
-        for (const [otherWs] of activeSessions.entries()) {
-          if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
-            otherWs.send(movePkt);
+        // Method 0: move(t) -> 13 bytes total: [0, o_u32, r_u32, a_u32]
+        if (buf.length >= 13 && buf[0] === 0) {
+          const o = buf.readUInt32LE(1);
+          const r = buf.readUInt32LE(5);
+          const a = buf.readUInt32LE(9);
+
+          // Decode position
+          const origX_Y = (o ^ 0xb8f2782c) >>> 0;
+          const x = (origX_Y & 0xffff);
+          const y = (origX_Y >>> 16);
+
+          // Decode direction and animation state
+          const decodedR = (r ^ 0x816c41fa) >>> 0;
+          const dir = decodedR & 0xf;
+          const animState = (decodedR >>> 4) & 0xff;
+
+          // Facing direction: bit 1 is set for facing left (dir & 1 or x < session.x)
+          let state = session.state || 0;
+          if (x < session.x || (dir & 1)) {
+            state |= 2;
+          } else if (x > session.x || (dir & 2)) {
+            state &= ~2;
           }
-        }
-        return;
-      }
+          // Walking flag: bit 0
+          if (x !== session.x || y !== session.y || animState > 0) {
+            state |= 1;
+          } else {
+            state &= ~1;
+          }
+          session.x = x;
+          session.y = y;
+          session.state = state;
 
-      // Method 1: actionWithReturn -> resolve packet: 255 (resolve), 1 (method 1), messageId, 0 (undefined)
-      if (buf.length >= 2 && buf[0] === 1) {
-        ws.send(Buffer.from([255, 1, 1, 0]));
-        return;
-      }
-
-      // Method 2: action -> e.g. chat say (194) or expressions (199)
-      if (buf.length >= 2 && buf[0] === 2) {
-        const actionType = buf[1];
-        // Action 194: Say message
-        // Format: [2, 194, chatType(u8), messageId(varint), targetEntityId(u16 LE), strLen+1(varint), text(utf8), options(u8)]
-        if (actionType === 194) {
-          try {
-            let offset = 2;
-            const chatType = buf.readUInt8(offset); offset += 1;
-            
-            // messageId varint
-            while (offset < buf.length && (buf[offset] & 0x80)) offset++;
-            offset++; // last byte of messageId
-            
-            // targetEntityId (u16 LE)
-            offset += 2;
-            
-            // text string (varint length + utf8)
-            let strLen = 0, shift = 0;
-            while (offset < buf.length) {
-              const b = buf[offset++];
-              strLen |= (b & 0x7f) << shift;
-              if (!(b & 0x80)) break;
-              shift += 7;
+          // Broadcast movement to all other clients via Opcode 89
+          const movePkt = worldPacket.createPonyMovePacket(session.entityId, x, y, state, nextUpdateId());
+          for (const [otherWs] of activeSessions.entries()) {
+            if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+              otherWs.send(movePkt);
             }
-            strLen -= 1; // actual string length
-            
-            if (strLen > 0 && offset + strLen <= buf.length) {
-              const text = buf.toString('utf8', offset, offset + strLen);
-              console.log(`[CHAT] ${session.name} (${session.entityId}): "${text}"`);
+          }
+          return;
+        }
 
-              // 1. In-world Speech Bubble (Opcode 85)
-              const bubblePkt = worldPacket.createOpcode85ChatPacket(
-                session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev
-              );
-              // 2. Chat Log notification (Opcode 87)
-              const chatPkt = worldPacket.createChatPacket(
-                session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev
-              );
+        // Method 1: actionWithReturn -> resolve packet: 255 (resolve), 1 (method 1), messageId, 0 (undefined)
+        if (buf.length >= 2 && buf[0] === 1) {
+          ws.send(Buffer.from([255, 1, 1, 0]));
+          return;
+        }
 
-              for (const [clientWs] of activeSessions.entries()) {
-                if (clientWs.readyState === WebSocket.OPEN) {
-                  clientWs.send(bubblePkt);
-                  clientWs.send(chatPkt);
+        // Method 2: action -> e.g. chat say (194) or expressions (199)
+        if (buf.length >= 2 && buf[0] === 2) {
+          const actionType = buf[1];
+          // Action 194: Say message
+          // Format: [2, 194, chatType(u8), messageId(varint), targetEntityId(u16 LE), strLen+1(varint), text(utf8), options(u8)]
+          if (actionType === 194) {
+            try {
+              let offset = 2;
+              const chatType = buf.readUInt8(offset); offset += 1;
+              
+              // messageId varint
+              while (offset < buf.length && (buf[offset] & 0x80)) offset++;
+              offset++; // last byte of messageId
+              
+              // targetEntityId (u16 LE)
+              offset += 2;
+              
+              // text string (varint length + utf8)
+              let strLen = 0, shift = 0;
+              while (offset < buf.length) {
+                const b = buf[offset++];
+                strLen |= (b & 0x7f) << shift;
+                if (!(b & 0x80)) break;
+                shift += 7;
+              }
+              strLen -= 1; // actual string byte length
+              
+              if (strLen > 0 && offset + strLen <= buf.length) {
+                const text = buf.toString('utf8', offset, offset + strLen);
+                console.log(`[CHAT] ${session.name} (${session.entityId}): "${text}"`);
+
+                // In-world Speech Bubble & Chat Log entry (Opcode 85)
+                const bubblePkt = worldPacket.createOpcode85ChatPacket(
+                  session.entityId, session.name, text, chatType, nextUpdateId(), session.isDev
+                );
+
+                for (const [clientWs] of activeSessions.entries()) {
+                  if (clientWs.readyState === WebSocket.OPEN) {
+                    clientWs.send(bubblePkt);
+                  }
                 }
               }
+            } catch (e) {
+              console.error('[WS] Error parsing chat action:', e.message);
             }
-          } catch (e) {
-            console.error('[WS] Error parsing chat action:', e.message);
+            return;
           }
-          return;
-        }
 
-        // Action 199: Expressions / Emotes
-        // Format: [2, 199, expr1(u32 LE), expr2(u32 LE), options(u8)]
-        if (actionType === 199 && buf.length >= 10) {
-          try {
-            const expr1 = buf.readUInt32LE(2);
-            const expr2 = buf.readUInt32LE(6);
-            console.log(`[EXPR] ${session.name} (${session.entityId}): expr1=${expr1}, expr2=${expr2}`);
+          // Action 199: Expressions / Emotes
+          // Format: [2, 199, expr1(u32 LE), expr2(u32 LE), options(u8)]
+          if (actionType === 199 && buf.length >= 10) {
+            try {
+              const expr1 = buf.readUInt32LE(2);
+              const expr2 = buf.readUInt32LE(6);
+              console.log(`[EXPR] ${session.name} (${session.entityId}): expr1=${expr1}, expr2=${expr2}`);
 
-            const exprPkt = worldPacket.createExpressionPacket(session.entityId, expr1, expr2, nextUpdateId());
-            for (const [otherWs] of activeSessions.entries()) {
-              if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
-                otherWs.send(exprPkt);
+              const exprPkt = worldPacket.createExpressionPacket(session.entityId, expr1, expr2, nextUpdateId());
+              for (const [otherWs] of activeSessions.entries()) {
+                if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
+                  otherWs.send(exprPkt);
+                }
               }
+            } catch (e) {
+              console.error('[WS] Error parsing expression action:', e.message);
             }
-          } catch (e) {
-            console.error('[WS] Error parsing expression action:', e.message);
+            return;
           }
-          return;
         }
       }
+    } catch (err) {
+      console.error('[WS] Error in message handler:', err.message);
     }
   });
 
