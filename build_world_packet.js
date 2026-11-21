@@ -408,7 +408,9 @@ const PONY_LOOK_PRESETS = [
   }
 ];
 
-function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3100, spawnY = 2240, isDev = false) {
+const SERVER_STARTUP_HASH = 0x5054574e; // 'PTWN' (Non-zero uint32 required to enable native chatlog <chat-log>)
+
+function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 3100, spawnY = 2240, isDev = false, serverStartupHash = SERVER_STARTUP_HASH) {
   const parts = [];
 
   // ==========================================
@@ -429,8 +431,8 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   // Unconditional tail of oBl: rr (string), Fc (uint32), bq (float64)
   parts.push(writeString('')); // rr: Hq(e)
   const fcBuf = Buffer.alloc(4);
-  fcBuf.writeUInt32LE(0, 0);
-  parts.push(fcBuf);           // Fc: HQ(e)
+  fcBuf.writeUInt32LE(serverStartupHash || SERVER_STARTUP_HASH, 0);
+  parts.push(fcBuf);           // Fc: HQ(e) non-zero server startup hash
   const bqBuf = Buffer.alloc(8);
   bqBuf.writeDoubleLE(Date.now(), 0);
   parts.push(bqBuf);           // bq: HW(e)
@@ -585,6 +587,7 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
 }
 
 module.exports = {
+  SERVER_STARTUP_HASH,
   buildWorldInitPacket,
   createPonySpawnPacket,
   createPonyMovePacket,
