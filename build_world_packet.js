@@ -1,4 +1,5 @@
 const fs = require('fs');
+const path = require('path');
 
 function writeVarInt(val) {
   const bytes = [];
@@ -586,10 +587,71 @@ function buildWorldInitPacket(activeChar = null, playerEntityId = 1, spawnX = 31
   return Buffer.concat(parts);
 }
 
+function createStaticEntityPacket(entityId, type, x, y, flipped = false, updateId = 1) {
+  const parts = [];
+  const header = Buffer.alloc(4);
+  header.writeUInt32LE(88 | (updateId << 8), 0);
+  parts.push(header);
+
+  const flags = 1 | 2 | 4; // pos | state | type
+  const extra = 0; // uint32 ID, not a pony (extra & 64 is 0)
+  const c = encodeC(flags, extra);
+  parts.push(writeVarInt(c));
+
+  // Entity ID (uint32 LE)
+  const idBuf = Buffer.alloc(4);
+  idBuf.writeUInt32LE(entityId, 0);
+  parts.push(idBuf);
+
+  // Position: x (uint16 LE), y (uint16 LE)
+  const posBuf = Buffer.alloc(4);
+  posBuf.writeUInt16LE(Math.round(x), 0);
+  posBuf.writeUInt16LE(Math.round(y), 2);
+  parts.push(posBuf);
+
+  // State (uint8): bit 2 is flipped
+  parts.push(Buffer.from([flipped ? 2 : 0]));
+
+  // Type (uint16 LE)
+  const typeBuf = Buffer.alloc(2);
+  typeBuf.writeUInt16LE(type, 0);
+  parts.push(typeBuf);
+
+  return Buffer.concat(parts);
+}
+
+let cachedStaticBatches = null;
+let staticEntitiesCount = 0;
+
+function getStaticEntitiesBatches() {
+  if (cachedStaticBatches) return cachedStaticBatches;
+  const entsPath = path.join(__dirname, 'data/town_map_entities.json');
+  if (!fs.existsSync(entsPath)) return [];
+  const ents = JSON.parse(fs.readFileSync(entsPath, 'utf8'));
+  staticEntitiesCount = ents.length;
+
+  const batches = [];
+  let currentBatch = [];
+  for (let i = 0; i < ents.length; i++) {
+    const e = ents[i];
+    const pkt = createStaticEntityPacket(10000 + i, e.type, e.x, e.y, !!e.flipped, (i % 200) + 1);
+    currentBatch.push(pkt);
+    if (currentBatch.length >= 200 || i === ents.length - 1) {
+      batches.push(Buffer.concat(currentBatch));
+      currentBatch = [];
+    }
+  }
+  cachedStaticBatches = batches;
+  return cachedStaticBatches;
+}
+
 module.exports = {
   SERVER_STARTUP_HASH,
   buildWorldInitPacket,
   createPonySpawnPacket,
+  createStaticEntityPacket,
+  getStaticEntitiesBatches,
+  get STATIC_ENTITIES_COUNT() { return staticEntitiesCount || 1737; },
   createPonyMovePacket,
   createTypingPacket,
   createEntityRemovePacket,

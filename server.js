@@ -596,10 +596,19 @@ wss.on('connection', (ws, req) => {
     console.error('[WS] Error sending world init packet:', err.message);
   }
 
-  // 2. Synchronize existing players to this new client (Opcode 88)
-  // Give new client 200ms to complete initial packet processing before spawning existing entities
+  // 2. Synchronize existing players and static map entities to this new client (Opcode 88)
+  // Give new client 200ms to complete initial packet processing before spawning entities
   setTimeout(() => {
     if (ws.readyState === WebSocket.OPEN) {
+      // Send authentic town map entities (houses, trees, stalls, lanterns, benches)
+      const staticBatches = worldPacket.getStaticEntitiesBatches();
+      for (const batch of staticBatches) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(batch);
+        }
+      }
+      console.log(`[WS] Synced ${worldPacket.STATIC_ENTITIES_COUNT} authentic map entities to entity ${assignedEntityId}`);
+
       for (const [otherWs, otherSession] of activeSessions.entries()) {
         if (otherWs !== ws && otherWs.readyState === WebSocket.OPEN) {
           const spawnOther = worldPacket.createPonySpawnPacket(
