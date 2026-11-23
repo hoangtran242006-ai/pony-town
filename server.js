@@ -342,6 +342,31 @@ function allocateEntityId() {
 // Scenic spawn meadow center (Market Square Town Plaza with trees, buildings, houses)
 const SPAWN_CENTER = { x: 3100, y: 2240 };
 
+function getUnoTablesForSession(session) {
+  return UNO_TABLES.map(table => {
+    let seatIndex = -1;
+    let seatDistance = Infinity;
+    table.seats.forEach((seat, index) => {
+      const distance = Math.hypot(seat.x - session.x, seat.y - session.y);
+      if (distance < seatDistance) {
+        seatDistance = distance;
+        seatIndex = index;
+      }
+    });
+    return {
+      ...table,
+      nearbySeatIndex: seatDistance <= 120 ? seatIndex : null,
+      rooms: unoRooms.list(table.id)
+    };
+  });
+}
+
+function sendUnoTables(ws, session) {
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'uno_tables', tables: getUnoTablesForSession(session) }));
+  }
+}
+
 // ==========================================
 // REST & Binary APIs (Pony Town compatibility)
 // ==========================================
@@ -708,33 +733,31 @@ wss.on('connection', (ws, req) => {
         const send = (payload) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(payload));
 
         if (msg.type === 'uno_tables') {
-          const nearbyTables = UNO_TABLES.map(table => {
-            let seatIndex = -1;
-            let seatDistance = Infinity;
-            table.seats.forEach((seat, index) => {
-              const distance = Math.hypot(seat.x - session.x, seat.y - session.y);
-              if (distance < seatDistance) {
-                seatDistance = distance;
-                seatIndex = index;
-              }
-            });
-            return {
-              ...table,
-              nearbySeatIndex: seatDistance <= 120 ? seatIndex : null,
-              rooms: unoRooms.list(table.id)
-            };
-          });
-          send({
-            type: 'uno_tables',
-            tables: nearbyTables
-          });
+          sendUnoTables(ws, session);
+          return;
+        }
+
+        if (msg.type === 'uno_sit') {
+          const table = UNO_TABLES.find(item => item.id === msg.tableId);
+          const seatIndex = Number(msg.seatIndex);
+          const seat = table?.seats[seatIndex];
+          if (!table || !seat || Math.hypot(seat.x - session.x, seat.y - session.y) > 120) {
+            send({ type: 'uno_error', error: 'Move closer to an UNO seat first' });
+            return;
+          }
+          send({ type: 'uno_seated', tableId: table.id, seatIndex });
           return;
         }
 
         if (msg.type === 'uno_create') {
           const table = UNO_TABLES.find(t => t.id === msg.tableId);
           if (!table) return send({ type: 'uno_error', error: 'Unknown UNO table' });
-          const room = unoRooms.create(table.id, { ...player, seatIndex: Number.isInteger(msg.seatIndex) ? msg.seatIndex : 0 }, msg.settings || {});
+          const seatIndex = Number(msg.seatIndex);
+          const seat = table.seats[seatIndex];
+          if (!seat || Math.hypot(seat.x - session.x, seat.y - session.y) > 120) {
+            return send({ type: 'uno_error', error: 'Move closer to an UNO seat first' });
+          }
+          const room = unoRooms.create(table.id, { ...player, seatIndex }, msg.settings || {});
           unoRooms.sync(room);
           send({ type: 'uno_created', roomId: room.id, tableId: table.id });
           unoRooms.broadcast(room, 'uno_rooms', { rooms: unoRooms.list(table.id) });
@@ -743,9 +766,16 @@ wss.on('connection', (ws, req) => {
 
         if (msg.type === 'uno_join') {
           try {
-            const room = unoRooms.join(msg.roomId, { ...player, seatIndex: Number.isInteger(msg.seatIndex) ? msg.seatIndex : undefined });
-            unoRooms.sync(room);
-            unoRooms.broadcast(room, 'uno_rooms', { rooms: unoRooms.list(room.tableId) });
+            const room = unoRooms.rooms.get(msg.roomId);
+            const table = room && UNO_TABLES.find(item => item.id === room.tableId);
+            const seatIndex = Number(msg.seatIndex);
+            const seat = table?.seats[seatIndex];
+            if (!room || !seat || Math.hypot(seat.x - session.x, seat.y - session.y) > 120) {
+              throw new Error('Move closer to an UNO seat first');
+            }
+            const joined = unoRooms.join(msg.roomId, { ...player, seatIndex });
+            unoRooms.sync(joined);
+            unoRooms.broadcast(joined, 'uno_rooms', { rooms: unoRooms.list(joined.tableId) });
           } catch (err) {
             send({ type: 'uno_error', error: err.message });
           }
@@ -909,6 +939,7 @@ wss.on('connection', (ws, req) => {
           session.vy = vy;
           session.state = state;
           session.animState = animState;
+          sendUnoTables(ws, session);
 
           // Broadcast movement with velocity, state, and animationState via Opcode 89
           const movePkt = worldPacket.createPonyMovePacket(

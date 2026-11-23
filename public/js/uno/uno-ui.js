@@ -6,9 +6,11 @@ class UnoUI {
     this.tableId = null;
     this.tables = [];
     this.pendingWild = null;
+    this.nearbySeat = null;
     this.build();
     window.addEventListener('uno-message', e => this.handle(e.detail));
     this.client.connect();
+    this.proximityTimer = setInterval(() => this.client.send({ type: 'uno_tables' }), 1000);
   }
 
   build() {
@@ -37,10 +39,20 @@ class UnoUI {
   }
 
   setNearbySeat(seatInfo) {
+    this.nearbySeat = seatInfo;
     const button = document.getElementById('uno-world-button');
     if (!button) return;
     button.classList.toggle('visible', !!seatInfo);
-    button.onclick = () => seatInfo ? this.openAtSeat(seatInfo) : null;
+    button.textContent = seatInfo ? 'SIT / UNO' : 'UNO';
+    button.onclick = () => seatInfo ? this.sitAtSeat(seatInfo) : null;
+  }
+
+  sitAtSeat(seatInfo) {
+    this.client.send({
+      type: 'uno_sit',
+      tableId: seatInfo.table.id,
+      seatIndex: seatInfo.index
+    });
   }
 
   open(tableId = 'plaza-north') {
@@ -71,6 +83,10 @@ class UnoUI {
         this.setNearbySeat(null);
       }
       if (!this.state && document.getElementById('uno-modal')?.classList.contains('open')) this.renderLobby();
+    } else if (msg.type === 'uno_seated') {
+      this.tableId = msg.tableId;
+      this.seatIndex = msg.seatIndex;
+      this.open(this.tableId);
     } else if (msg.type === 'uno_created') {
       this.roomId = msg.roomId;
       this.tableId = msg.tableId;
