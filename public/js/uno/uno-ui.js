@@ -15,11 +15,11 @@ class UnoUI {
     const host = document.createElement('div');
     host.id = 'uno-root';
     host.innerHTML = `
-      <button id="uno-world-button" class="uno-world-button" type="button" aria-label="Open UNO table">UNO TABLE</button>
+      <button id="uno-world-button" class="uno-world-button" type="button" aria-label="Sit at UNO table">SIT / UNO</button>
       <div id="uno-modal" class="uno-modal" aria-hidden="true">
         <div class="uno-window">
           <header class="uno-titlebar">
-            <span>UNO at the Town Plaza</span>
+            <span>UNO table</span>
             <button id="uno-close" type="button" aria-label="Close UNO">X</button>
           </header>
           <div id="uno-content" class="uno-content"></div>
@@ -28,6 +28,19 @@ class UnoUI {
     document.body.appendChild(host);
     document.getElementById('uno-world-button').addEventListener('click', () => this.open());
     document.getElementById('uno-close').addEventListener('click', () => this.close());
+  }
+
+  openAtSeat(seatInfo) {
+    this.tableId = seatInfo.table.id;
+    this.seatIndex = seatInfo.index;
+    this.open(this.tableId);
+  }
+
+  setNearbySeat(seatInfo) {
+    const button = document.getElementById('uno-world-button');
+    if (!button) return;
+    button.classList.toggle('visible', !!seatInfo);
+    button.onclick = () => seatInfo ? this.openAtSeat(seatInfo) : null;
   }
 
   open(tableId = 'plaza-north') {
@@ -45,7 +58,19 @@ class UnoUI {
   handle(msg) {
     if (msg.type === 'uno_tables') {
       this.tables = msg.tables;
-      if (!this.state) this.renderLobby();
+      const nearby = this.tables.find(table => table.nearbySeatIndex !== null);
+      if (nearby) {
+        this.tableId = nearby.id;
+        this.seatIndex = nearby.nearbySeatIndex;
+        this.setNearbySeat({
+          table: nearby,
+          seat: nearby.seats[nearby.nearbySeatIndex],
+          index: nearby.nearbySeatIndex
+        });
+      } else {
+        this.setNearbySeat(null);
+      }
+      if (!this.state && document.getElementById('uno-modal')?.classList.contains('open')) this.renderLobby();
     } else if (msg.type === 'uno_created') {
       this.roomId = msg.roomId;
       this.tableId = msg.tableId;
@@ -59,7 +84,7 @@ class UnoUI {
       if (confirm(`${msg.from} invited you to UNO. Join?`)) {
         this.open(msg.tableId);
         this.roomId = msg.roomId;
-        this.client.send({ type: 'uno_join', roomId: msg.roomId });
+        this.client.send({ type: 'uno_join', roomId: msg.roomId, seatIndex: this.seatIndex });
       }
     }
   }
@@ -90,6 +115,7 @@ class UnoUI {
         this.client.send({
           type: 'uno_create',
           tableId: this.tableId,
+          seatIndex: this.seatIndex,
           settings: {
             maxPlayers: Number(document.getElementById('uno-max').value),
             turnTime: Number(document.getElementById('uno-time').value),
@@ -106,7 +132,7 @@ class UnoUI {
         button.textContent = `${room.ownerName} — ${room.playerCount}/${room.maxPlayers}`;
         button.onclick = () => {
           this.roomId = room.id;
-          this.client.send({ type: 'uno_join', roomId: room.id });
+          this.client.send({ type: 'uno_join', roomId: room.id, seatIndex: this.seatIndex });
         };
         list.appendChild(button);
       });

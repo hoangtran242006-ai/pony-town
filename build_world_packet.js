@@ -628,6 +628,13 @@ function getStaticEntitiesBatches() {
   const entsPath = path.join(__dirname, 'data/town_map_entities.json');
   if (!fs.existsSync(entsPath)) return [];
   const ents = JSON.parse(fs.readFileSync(entsPath, 'utf8'));
+  ents.push(
+    { type: 14, x: 3064, y: 2240, flipped: false },
+    { type: 8, x: 3024, y: 2240, flipped: false },
+    { type: 8, x: 3104, y: 2240, flipped: true },
+    { type: 8, x: 3064, y: 2200, flipped: false },
+    { type: 8, x: 3064, y: 2280, flipped: true }
+  );
   staticEntitiesCount = ents.length;
 
   const batches = [];

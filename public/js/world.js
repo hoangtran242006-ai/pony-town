@@ -2,7 +2,6 @@
  * Pony Town World & Map Engine
  * Manages tiles, collision maps, town objects, items, and day/night lighting.
  */
-
 class World {
   constructor(mapData = {}) {
     this.width = mapData.width || 120;
@@ -132,6 +131,7 @@ class World {
     return null;
   }
 
+
   /**
    * Render all visible tiles and map ground objects
    */
@@ -174,6 +174,7 @@ class World {
       const screen = camera.worldToScreen(bench.x, bench.y);
       Sprites.drawBench(ctx, screen.x, screen.y, bench.facing);
     }
+
   }
 
   /**

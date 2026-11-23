@@ -308,8 +308,18 @@ const activeSessions = new Map(); // ws -> session
 const unoRooms = new UnoRoomManager();
 
 const UNO_TABLES = [
-  { id: 'plaza-north', name: 'North Plaza UNO Table', x: 60, y: 43 },
-  { id: 'plaza-south', name: 'South Plaza UNO Table', x: 60, y: 47 }
+  {
+    id: 'plaza-north',
+    name: 'North Plaza UNO Table',
+    x: 3064,
+    y: 2240,
+    seats: [
+      { x: 3024, y: 2240 },
+      { x: 3104, y: 2240 },
+      { x: 3064, y: 2200 },
+      { x: 3064, y: 2280 }
+    ]
+  }
 ];
 
 function allocateEntityId() {
@@ -698,12 +708,25 @@ wss.on('connection', (ws, req) => {
         const send = (payload) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(payload));
 
         if (msg.type === 'uno_tables') {
+          const nearbyTables = UNO_TABLES.map(table => {
+            let seatIndex = -1;
+            let seatDistance = Infinity;
+            table.seats.forEach((seat, index) => {
+              const distance = Math.hypot(seat.x - session.x, seat.y - session.y);
+              if (distance < seatDistance) {
+                seatDistance = distance;
+                seatIndex = index;
+              }
+            });
+            return {
+              ...table,
+              nearbySeatIndex: seatDistance <= 120 ? seatIndex : null,
+              rooms: unoRooms.list(table.id)
+            };
+          });
           send({
             type: 'uno_tables',
-            tables: UNO_TABLES.map(table => ({
-              ...table,
-              rooms: unoRooms.list(table.id)
-            }))
+            tables: nearbyTables
           });
           return;
         }
@@ -711,7 +734,7 @@ wss.on('connection', (ws, req) => {
         if (msg.type === 'uno_create') {
           const table = UNO_TABLES.find(t => t.id === msg.tableId);
           if (!table) return send({ type: 'uno_error', error: 'Unknown UNO table' });
-          const room = unoRooms.create(table.id, player, msg.settings || {});
+          const room = unoRooms.create(table.id, { ...player, seatIndex: Number.isInteger(msg.seatIndex) ? msg.seatIndex : 0 }, msg.settings || {});
           unoRooms.sync(room);
           send({ type: 'uno_created', roomId: room.id, tableId: table.id });
           unoRooms.broadcast(room, 'uno_rooms', { rooms: unoRooms.list(table.id) });
@@ -720,7 +743,7 @@ wss.on('connection', (ws, req) => {
 
         if (msg.type === 'uno_join') {
           try {
-            const room = unoRooms.join(msg.roomId, player);
+            const room = unoRooms.join(msg.roomId, { ...player, seatIndex: Number.isInteger(msg.seatIndex) ? msg.seatIndex : undefined });
             unoRooms.sync(room);
             unoRooms.broadcast(room, 'uno_rooms', { rooms: unoRooms.list(room.tableId) });
           } catch (err) {

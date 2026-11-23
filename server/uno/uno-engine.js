@@ -241,7 +241,9 @@ class UnoEngine {
         cardCount: p.hand.length,
         unoCalled: p.unoCalled,
         disconnected: p.disconnected,
-        bot: p.bot
+        bot: p.bot,
+        seatIndex: p.seatIndex,
+        ready: p.ready !== false
       })),
       selfHand: this.getPlayer(viewerId)?.hand || [],
       drawnCardId: this.drawnCardId

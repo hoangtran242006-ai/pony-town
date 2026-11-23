@@ -1,10 +1,11 @@
 #uno-world-button {
   position: fixed;
   left: 50%;
-  bottom: 24px;
+  bottom: 18px;
   z-index: 300;
   transform: translateX(-50%);
-  min-width: 96px;
+  display: none;
+  min-width: 108px;
   height: 34px;
   border: 2px solid #d0a65c;
   background: #76502c;
@@ -15,9 +16,15 @@
   cursor: pointer;
 }
 
+#uno-world-button.visible { display: block; }
+
 .uno-modal {
   position: fixed;
-  inset: 0;
+  left: 50%;
+  bottom: 18px;
+  width: min(760px, calc(100vw - 32px));
+  height: min(520px, calc(100vh - 120px));
+  transform: translateX(-50%);
   z-index: 500;
   display: none;
   align-items: center;
@@ -29,8 +36,8 @@
 .uno-modal.open { display: flex; }
 
 .uno-window {
-  width: min(920px, calc(100vw - 24px));
-  height: min(650px, calc(100vh - 24px));
+  width: 100%;
+  height: 100%;
   border: 3px solid #b68a4a;
   background: #3b4a2d;
   box-shadow: 0 8px 0 #1f2619, 0 12px 28px rgba(0,0,0,.65), inset 0 0 0 2px #26351f;

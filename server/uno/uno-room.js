@@ -19,7 +19,15 @@ class UnoRoomManager {
         turnTime: Math.min(120, Math.max(10, Number(settings?.turnTime) || 30)),
         allowBots: !!settings?.allowBots
       },
-      players: [{ id: owner.id, name: owner.name, ws: owner.ws, disconnected: false, bot: false }],
+      players: [{
+        id: owner.id,
+        name: owner.name,
+        ws: owner.ws,
+        disconnected: false,
+        bot: false,
+        seatIndex: Number.isInteger(owner.seatIndex) && owner.seatIndex >= 0 && owner.seatIndex < 4 ? owner.seatIndex : 0,
+        ready: true
+      }],
       engine: null
     };
     this.rooms.set(roomId, room);
@@ -48,9 +56,15 @@ class UnoRoomManager {
     if (existing) {
       existing.ws = player.ws;
       existing.disconnected = false;
+      if (Number.isInteger(player.seatIndex) && player.seatIndex >= 0 && player.seatIndex < 4) existing.seatIndex = player.seatIndex;
       return room;
     }
-    room.players.push({ id: player.id, name: player.name, ws: player.ws, disconnected: false, bot: false });
+    const usedSeats = new Set(room.players.map(p => p.seatIndex));
+    let seatIndex = Number.isInteger(player.seatIndex) && player.seatIndex >= 0 && player.seatIndex < 4
+      ? player.seatIndex
+      : 0;
+    while (usedSeats.has(seatIndex)) seatIndex++;
+    room.players.push({ id: player.id, name: player.name, ws: player.ws, disconnected: false, bot: false, seatIndex, ready: true });
     return room;
   }
 
@@ -80,7 +94,7 @@ class UnoRoomManager {
     if (room.settings.allowBots) {
       let botIndex = 1;
       while (players.length < room.settings.maxPlayers) {
-        players.push({ id: `bot-${roomId}-${botIndex}`, name: `Bot Pony ${botIndex}`, ws: null, disconnected: false, bot: true });
+        players.push({ id: `bot-${roomId}-${botIndex}`, name: `Bot Pony ${botIndex}`, ws: null, disconnected: false, bot: true, seatIndex: botIndex, ready: true });
         botIndex++;
       }
     }
@@ -124,7 +138,9 @@ class UnoRoomManager {
             cardCount: 0,
             unoCalled: false,
             disconnected: p.disconnected,
-            bot: p.bot
+            bot: p.bot,
+            seatIndex: p.seatIndex,
+            ready: p.ready !== false
           })),
           selfHand: []
         }

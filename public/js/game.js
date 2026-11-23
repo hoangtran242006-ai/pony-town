@@ -2,7 +2,6 @@
  * Pony Town Core Game Engine & Main Loop
  * Handles camera, player physics, input handling, entity management, and rendering.
  */
-
 class GameEngine {
   constructor() {
     this.canvas = document.getElementById('gameCanvas');
@@ -441,6 +440,7 @@ class GameEngine {
       this.pickupItem(item.id);
     }
   }
+
 
   // ==========================================
   // Main Update & Physics Loop
