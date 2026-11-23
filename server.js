@@ -6,6 +6,7 @@ const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 const binaryProtocol = require('./binary_protocol');
 const worldPacket = require('./build_world_packet');
+const UnoRoomManager = require('./server/uno/uno-room');
 
 const PORT = process.env.PORT || 3000;
 const app = express();
@@ -304,6 +305,12 @@ app.get('/logo.png', (req, res) => res.sendFile(path.join(__dirname, 'public/log
 // Global active player sessions map
 let nextEntityId = 10;
 const activeSessions = new Map(); // ws -> session
+const unoRooms = new UnoRoomManager();
+
+const UNO_TABLES = [
+  { id: 'plaza-north', name: 'North Plaza UNO Table', x: 60, y: 43 },
+  { id: 'plaza-south', name: 'South Plaza UNO Table', x: 60, y: 47 }
+];
 
 function allocateEntityId() {
   let attempts = 0;
@@ -495,6 +502,37 @@ app.post(['/api/settings', '/api/update-settings'], (req, res) => {
 // ==========================================
 const wss = new WebSocketServer({ server, path: '/ws' });
 
+setInterval(() => {
+  for (const room of unoRooms.rooms.values()) {
+    if (!room.engine || room.engine.status !== 'playing') continue;
+    const timeoutResult = room.engine.timeout();
+    if (timeoutResult) unoRooms.sync(room);
+
+    if (room.engine.status !== 'playing') continue;
+    const current = room.engine.players[room.engine.current];
+    if (!current?.bot) continue;
+    const top = room.engine.getTop();
+    const card = current.hand.find(c => {
+      if (c.type === 'wild') return true;
+      if (c.type === 'wild4') return room.engine.wildDrawFourIsLegal(current, room.engine.currentColor);
+      return c.color === room.engine.currentColor ||
+        (c.type === 'number' && top.type === 'number' && c.value === top.value) ||
+        (c.type !== 'number' && c.type === top.type);
+    });
+    try {
+      if (card) {
+        const color = card.type === 'wild' || card.type === 'wild4'
+          ? (['red', 'yellow', 'green', 'blue'].findIndex(x => x === card.color) >= 0 ? card.color : 'red')
+          : card.color;
+        room.engine.play(current.id, card.id, color);
+      } else {
+        room.engine.draw(current.id);
+      }
+      unoRooms.sync(room);
+    } catch (_) {}
+  }
+}, 1000);
+
 let packetUpdateCounter = 20;
 function nextUpdateId() {
   return (++packetUpdateCounter) & 0xffffff;
@@ -651,6 +689,147 @@ wss.on('connection', (ws, req) => {
   // Message handler
   ws.on('message', (raw, isBinary) => {
     try {
+      if (!isBinary) {
+        let msg;
+        try { msg = JSON.parse(raw.toString()); } catch (_) { return; }
+        if (!msg || typeof msg.type !== 'string') return;
+
+        const player = { id: String(session.entityId), name: session.name, ws };
+        const send = (payload) => ws.readyState === WebSocket.OPEN && ws.send(JSON.stringify(payload));
+
+        if (msg.type === 'uno_tables') {
+          send({
+            type: 'uno_tables',
+            tables: UNO_TABLES.map(table => ({
+              ...table,
+              rooms: unoRooms.list(table.id)
+            }))
+          });
+          return;
+        }
+
+        if (msg.type === 'uno_create') {
+          const table = UNO_TABLES.find(t => t.id === msg.tableId);
+          if (!table) return send({ type: 'uno_error', error: 'Unknown UNO table' });
+          const room = unoRooms.create(table.id, player, msg.settings || {});
+          unoRooms.sync(room);
+          send({ type: 'uno_created', roomId: room.id, tableId: table.id });
+          unoRooms.broadcast(room, 'uno_rooms', { rooms: unoRooms.list(table.id) });
+          return;
+        }
+
+        if (msg.type === 'uno_join') {
+          try {
+            const room = unoRooms.join(msg.roomId, player);
+            unoRooms.sync(room);
+            unoRooms.broadcast(room, 'uno_rooms', { rooms: unoRooms.list(room.tableId) });
+          } catch (err) {
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_leave') {
+          const room = unoRooms.byPlayer(player.id);
+          if (room) {
+            unoRooms.leave(room.id, player.id);
+            unoRooms.sync(room);
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_start') {
+          const room = unoRooms.byPlayer(player.id);
+          console.log(`[UNO] Start request player=${player.id} room=${room?.id || 'none'}`);
+          try {
+            if (!room) throw new Error('Join a room first');
+            unoRooms.start(room.id, player.id);
+            console.log(`[UNO] Started room=${room.id} players=${room.players.length}`);
+            unoRooms.sync(room);
+          } catch (err) {
+            console.log(`[UNO] Start error: ${err.message}`);
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_play') {
+          const room = unoRooms.byPlayer(player.id);
+          try {
+            if (!room?.engine) throw new Error('Game is not running');
+            room.engine.play(player.id, msg.cardId, msg.color);
+            unoRooms.sync(room);
+          } catch (err) {
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_draw') {
+          const room = unoRooms.byPlayer(player.id);
+          try {
+            if (!room?.engine) throw new Error('Game is not running');
+            room.engine.draw(player.id);
+            unoRooms.sync(room);
+          } catch (err) {
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_pass') {
+          const room = unoRooms.byPlayer(player.id);
+          try {
+            if (!room?.engine) throw new Error('Game is not running');
+            room.engine.pass(player.id);
+            unoRooms.sync(room);
+          } catch (err) {
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_call') {
+          const room = unoRooms.byPlayer(player.id);
+          try {
+            if (!room?.engine) throw new Error('Game is not running');
+            room.engine.callUno(player.id);
+            unoRooms.sync(room);
+          } catch (err) {
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_catch') {
+          const room = unoRooms.byPlayer(player.id);
+          try {
+            if (!room?.engine) throw new Error('Game is not running');
+            room.engine.catchUno(player.id, msg.targetId);
+            unoRooms.sync(room);
+          } catch (err) {
+            send({ type: 'uno_error', error: err.message });
+          }
+          return;
+        }
+
+        if (msg.type === 'uno_invite') {
+          const target = [...activeSessions.entries()].find(([, s]) => s.entityId === Number(msg.targetId));
+          if (target) {
+            const room = unoRooms.byPlayer(player.id);
+            target[0].send(JSON.stringify({
+              type: 'uno_invite',
+              from: session.name,
+              roomId: room?.id,
+              tableId: room?.tableId
+            }));
+          }
+          return;
+        }
+
+        return;
+      }
+
       if (isBinary || Buffer.isBuffer(raw)) {
         const buf = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
 
@@ -849,6 +1028,11 @@ wss.on('connection', (ws, req) => {
     clearInterval(pingInterval);
     if (session.typingTimeout) {
       clearTimeout(session.typingTimeout);
+    }
+    const unoRoom = unoRooms.byPlayer(String(session.entityId));
+    if (unoRoom) {
+      unoRooms.markDisconnect(unoRoom.id, String(session.entityId));
+      unoRooms.sync(unoRoom);
     }
     activeSessions.delete(ws);
     console.log(`[WS] Client disconnected: entityId=${session.entityId}, name="${session.name}" (remaining: ${activeSessions.size})`);
